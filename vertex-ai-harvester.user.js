@@ -153,29 +153,62 @@
     // --- WebSocket Communication ---
     let socket = null;
     const WEBSOCKET_URL = 'ws://127.0.0.1:28881';
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 10;
 
     function connect() {
-        socket = new WebSocket(WEBSOCKET_URL);
-        socket.onopen = () => {
-            logToScreen(`✅ Connected to ${WEBSOCKET_URL}`);
-            // Identify as harvester
-            socket.send(JSON.stringify({ type: 'identify', client: 'harvester' }));
-        };
-        
-        socket.onmessage = (event) => {
-            try {
-                const msg = JSON.parse(event.data);
-                if (msg.type === 'refresh_token') {
-                    logToScreen('🔄 Received refresh request from backend.');
-                    attemptRefresh();
+        try {
+            socket = new WebSocket(WEBSOCKET_URL);
+            
+            socket.onopen = () => {
+                logToScreen(`✅ Connected to ${WEBSOCKET_URL}`);
+                reconnectAttempts = 0; // 重置重连计数
+                // Identify as harvester
+                socket.send(JSON.stringify({ type: 'identify', client: 'harvester' }));
+            };
+            
+            socket.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'refresh_token') {
+                        logToScreen('🔄 Received refresh request from backend.');
+                        attemptRefresh().catch(err => {
+                            logToScreen(`❌ Refresh failed: ${err}`);
+                        });
+                    } else if (msg.type === 'ping') {
+                        // 响应心跳
+                        socket.send(JSON.stringify({ type: 'pong' }));
+                    }
+                } catch (e) {
+                    console.error('WS Parse Error', e);
+                    logToScreen(`⚠️ WebSocket message parse error: ${e}`);
                 }
-            } catch (e) {
-                console.error('WS Parse Error', e);
-            }
-        };
+            };
 
-        socket.onclose = () => setTimeout(connect, 2000);
-        socket.onerror = (err) => console.error('WS Error', err);
+            socket.onclose = (event) => {
+                logToScreen(`🔌 WebSocket disconnected (Code: ${event.code})`);
+                reconnectAttempts++;
+                
+                if (reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
+                    const delay = Math.min(2000 * reconnectAttempts, 30000); // 最多等待 30 秒
+                    logToScreen(`🔄 Reconnecting in ${delay/1000}s... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+                    setTimeout(connect, delay);
+                } else {
+                    logToScreen(`❌ Max reconnection attempts reached. Please refresh the page.`);
+                }
+            };
+            
+            socket.onerror = (err) => {
+                console.error('WS Error', err);
+                logToScreen(`⚠️ WebSocket error occurred`);
+            };
+        } catch (e) {
+            logToScreen(`❌ WebSocket connection failed: ${e}`);
+            reconnectAttempts++;
+            if (reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
+                setTimeout(connect, 2000);
+            }
+        }
     }
 
     function findSiteKey() {
@@ -204,22 +237,26 @@
     async function attemptRefresh() {
         logToScreen('🤖 Starting Auto-Refresh Sequence...');
         
-        // Check if we are on the correct URL (looser check)
-        // We check if the URL contains the specific model parameter
-        if (!window.location.href.includes(TARGET_MODEL_PARAM)) {
-            logToScreen(`🔄 Redirecting to target model URL for refresh...`);
-            logToScreen(`   Current: ${window.location.href}`);
-            logToScreen(`   Target:  ${TARGET_REFRESH_URL}`);
-            
-            sessionStorage.setItem(REFRESH_FLAG_KEY, 'true');
-            window.location.href = TARGET_REFRESH_URL;
-            return;
-        }
-
-        // If we are already on the URL, proceed to send message
         try {
+            // Check if we are on the correct URL (looser check)
+            // We check if the URL contains the specific model parameter
+            if (!window.location.href.includes(TARGET_MODEL_PARAM)) {
+                logToScreen(`🔄 Redirecting to target model URL for refresh...`);
+                logToScreen(`   Current: ${window.location.href}`);
+                logToScreen(`   Target:  ${TARGET_REFRESH_URL}`);
+                
+                sessionStorage.setItem(REFRESH_FLAG_KEY, 'true');
+                window.location.href = TARGET_REFRESH_URL;
+                return;
+            }
+
+            // 等待页面完全加载
+            await waitForPageReady();
+            
+            // If we are already on the URL, proceed to send message
             await sendDummyMessage();
             logToScreen('✅ Auto-refresh sequence completed.');
+            
             // Notify backend that the UI is stable and ready for retries
             // Add a small delay to ensure the model has responded and the token is validated
             setTimeout(() => {
@@ -230,7 +267,35 @@
             }, 1500); // 1.5 second delay
         } catch (e) {
             logToScreen(`❌ Auto-refresh failed: ${e}`);
+            // 通知后端刷新失败
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'refresh_failed', error: e.toString() }));
+            }
         }
+    }
+
+    // 等待页面完全加载就绪
+    async function waitForPageReady() {
+        const MAX_WAIT = 10000; // 10 秒超时
+        const startTime = Date.now();
+        
+        logToScreen('⏳ Waiting for page to be ready...');
+        
+        while (Date.now() - startTime < MAX_WAIT) {
+            // 检查页面是否加载完成
+            if (document.readyState === 'complete') {
+                // 检查是否能找到编辑器
+                const editor = await findEditor();
+                if (editor) {
+                    logToScreen('✅ Page is ready.');
+                    await new Promise(r => setTimeout(r, 500)); // 额外等待一点时间
+                    return;
+                }
+            }
+            await new Promise(r => setTimeout(r, 500));
+        }
+        
+        logToScreen('⚠️ Page ready timeout, proceeding anyway...');
     }
 
     async function sendDummyMessage() {
@@ -240,8 +305,8 @@
         while (attempts < MAX_RETRIES) {
             attempts++;
             try {
-                // Find editor - prioritize contenteditable div
-                const editor = document.querySelector('div[contenteditable="true"]');
+                // 智能查找编辑器 - 多种选择器策略
+                const editor = await findEditor();
                 
                 if (!editor) {
                     logToScreen(`⚠️ Editor not found (Attempt ${attempts}/${MAX_RETRIES}). Waiting...`);
@@ -251,47 +316,28 @@
 
                 logToScreen(`✍️ Entering "Hello" (Attempt ${attempts})...`);
                 
-                editor.focus();
-                editor.click(); // Ensure focus
+                // 确保编辑器获得焦点
+                await ensureFocus(editor);
                 
-                // Set text content directly
-                editor.textContent = 'Hello'; // Use a simple, short message
+                // 设置文本内容
+                await setEditorContent(editor, 'Hello');
                 
-                // Dispatch input events to trigger framework bindings
+                // 触发输入事件
                 editor.dispatchEvent(new Event('input', { bubbles: true }));
+                editor.dispatchEvent(new Event('change', { bubbles: true }));
                 await new Promise(r => setTimeout(r, 500));
 
-                logToScreen('🚀 Pressing Enter to send...');
-                const enterEvent = new KeyboardEvent('keydown', {
-                    key: 'Enter',
-                    code: 'Enter',
-                    keyCode: 13,
-                    which: 13,
-                    bubbles: true,
-                    cancelable: true
-                });
-                editor.dispatchEvent(enterEvent);
+                logToScreen('🚀 Attempting to send message...');
                 
-                // Check if text was cleared (success indicator)
-                await new Promise(r => setTimeout(r, 1000));
-                if (editor.textContent.trim() === '') {
-                    logToScreen('✅ Message sent successfully (Editor cleared).');
+                // 尝试多种发送方法
+                const sent = await trySendMessage(editor);
+                
+                if (sent) {
+                    logToScreen('✅ Message sent successfully.');
                     return;
                 }
                 
-                // If Enter failed, try clicking send button once, but don't retry the whole block
-                logToScreen('⚠️ Editor not cleared. Trying send button...');
-                const sendBtn = document.querySelector('button[aria-label*="Send"]');
-                if (sendBtn && !sendBtn.disabled) {
-                    sendBtn.click();
-                    await new Promise(r => setTimeout(r, 1000));
-                    if (editor.textContent.trim() === '') {
-                        logToScreen('✅ Message sent successfully (Send button cleared).');
-                        return;
-                    }
-                }
-                
-                // If we reach here, neither method worked in this attempt.
+                logToScreen(`⚠️ Send failed on attempt ${attempts}. Retrying...`);
                 
             } catch (e) {
                 logToScreen(`❌ Error in send attempt: ${e}`);
@@ -300,6 +346,158 @@
             await new Promise(r => setTimeout(r, 1000));
         }
         throw "Failed to send message after multiple attempts";
+    }
+
+    // 智能查找编辑器元素
+    async function findEditor() {
+        const selectors = [
+            'div[contenteditable="true"]',
+            'textarea[placeholder*="message" i]',
+            'textarea[placeholder*="prompt" i]',
+            'div[role="textbox"]',
+            'div.input-field[contenteditable="true"]',
+            '[data-placeholder][contenteditable="true"]'
+        ];
+        
+        for (const selector of selectors) {
+            const elements = document.querySelectorAll(selector);
+            for (const el of elements) {
+                // 检查元素是否可见且可编辑
+                if (isElementVisible(el) && !el.disabled && !el.readOnly) {
+                    logToScreen(`🔍 Found editor using: ${selector}`);
+                    return el;
+                }
+            }
+        }
+        return null;
+    }
+
+    // 检查元素是否可见
+    function isElementVisible(el) {
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        return style.display !== 'none' &&
+               style.visibility !== 'hidden' &&
+               style.opacity !== '0' &&
+               el.offsetParent !== null;
+    }
+
+    // 确保编辑器获得焦点
+    async function ensureFocus(editor) {
+        editor.focus();
+        editor.click();
+        
+        // 尝试将光标移到末尾
+        if (window.getSelection && document.createRange) {
+            const range = document.createRange();
+            range.selectNodeContents(editor);
+            range.collapse(false);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+        }
+        
+        await new Promise(r => setTimeout(r, 200));
+    }
+
+    // 设置编辑器内容
+    async function setEditorContent(editor, text) {
+        if (editor.tagName.toLowerCase() === 'textarea' || editor.tagName.toLowerCase() === 'input') {
+            editor.value = text;
+        } else {
+            editor.textContent = text;
+            // 尝试设置 innerHTML 以防某些框架需要
+            if (editor.innerHTML !== text) {
+                editor.innerHTML = text;
+            }
+        }
+    }
+
+    // 尝试发送消息 - 多种策略
+    async function trySendMessage(editor) {
+        // 策略 1: Enter 键
+        const enterSent = await tryEnterKey(editor);
+        if (enterSent) return true;
+        
+        // 策略 2: Ctrl+Enter 组合键
+        const ctrlEnterSent = await tryCtrlEnter(editor);
+        if (ctrlEnterSent) return true;
+        
+        // 策略 3: 点击发送按钮
+        const buttonSent = await tryClickSendButton(editor);
+        if (buttonSent) return true;
+        
+        return false;
+    }
+
+    // 尝试 Enter 键发送
+    async function tryEnterKey(editor) {
+        logToScreen('   → Trying Enter key...');
+        const enterEvent = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true
+        });
+        editor.dispatchEvent(enterEvent);
+        
+        await new Promise(r => setTimeout(r, 1000));
+        return isEditorCleared(editor);
+    }
+
+    // 尝试 Ctrl+Enter 组合键
+    async function tryCtrlEnter(editor) {
+        logToScreen('   → Trying Ctrl+Enter...');
+        const ctrlEnterEvent = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+        });
+        editor.dispatchEvent(ctrlEnterEvent);
+        
+        await new Promise(r => setTimeout(r, 1000));
+        return isEditorCleared(editor);
+    }
+
+    // 尝试点击发送按钮
+    async function tryClickSendButton(editor) {
+        logToScreen('   → Trying send button...');
+        
+        const buttonSelectors = [
+            'button[aria-label*="Send" i]',
+            'button[aria-label*="发送" i]',
+            'button[type="submit"]',
+            'button:has(svg[data-icon="send"])',
+            'button:has(.send-icon)',
+            '[role="button"][aria-label*="send" i]'
+        ];
+        
+        for (const selector of buttonSelectors) {
+            const buttons = document.querySelectorAll(selector);
+            for (const btn of buttons) {
+                if (isElementVisible(btn) && !btn.disabled) {
+                    logToScreen(`   → Found button: ${selector}`);
+                    btn.click();
+                    await new Promise(r => setTimeout(r, 1000));
+                    if (isEditorCleared(editor)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    // 检查编辑器是否已清空
+    function isEditorCleared(editor) {
+        const content = (editor.value || editor.textContent || editor.innerText || '').trim();
+        return content === '';
     }
 
     // --- Auto-Keepalive ---
@@ -441,21 +639,60 @@
     }
 
     // --- Init ---
-    window.addEventListener('DOMContentLoaded', () => {
-        connect();
-        intercept();
-        hookRecaptcha();
-        logToScreen('Harvester Armed. Please send a message in Vertex AI Studio.');
+    function initialize() {
+        try {
+            connect();
+            intercept();
+            hookRecaptcha();
+            logToScreen('✅ Harvester Armed. Please send a message in Vertex AI Studio.');
 
-        // Check for pending refresh
-        if (sessionStorage.getItem(REFRESH_FLAG_KEY) === 'true') {
-            logToScreen('🔄 Resuming refresh sequence after redirect...');
-            sessionStorage.removeItem(REFRESH_FLAG_KEY);
-            // Wait a bit for the editor to be ready
-            setTimeout(() => {
-                attemptRefresh();
-            }, 5000); // 5 seconds delay to ensure page load
+            // Check for pending refresh
+            if (sessionStorage.getItem(REFRESH_FLAG_KEY) === 'true') {
+                logToScreen('🔄 Resuming refresh sequence after redirect...');
+                sessionStorage.removeItem(REFRESH_FLAG_KEY);
+                // Wait a bit for the editor to be ready
+                setTimeout(() => {
+                    attemptRefresh().catch(err => {
+                        logToScreen(`❌ Resume refresh failed: ${err}`);
+                    });
+                }, 5000); // 5 seconds delay to ensure page load
+            }
+        } catch (e) {
+            logToScreen(`❌ Initialization failed: ${e}`);
+            console.error('Harvester Init Error:', e);
         }
+    }
+
+    // 监听 DOM 加载完成
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initialize);
+    } else {
+        // DOM 已经加载完成
+        initialize();
+    }
+
+    // 页面可见性变化时重新连接（如果断开）
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                logToScreen('👀 Page became visible, checking connection...');
+                setTimeout(() => {
+                    if (!socket || socket.readyState !== WebSocket.OPEN) {
+                        logToScreen('🔄 Reconnecting WebSocket...');
+                        connect();
+                    }
+                }, 1000);
+            }
+        }
+    });
+
+    // 全局错误处理
+    window.addEventListener('error', (event) => {
+        console.error('Global Error:', event.error);
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+        console.error('Unhandled Promise Rejection:', event.reason);
     });
 
 })();
