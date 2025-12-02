@@ -38,6 +38,8 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 安装 Playwright 浏览器（Chromium）
+# 设置浏览器安装路径并安装
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN playwright install chromium
 RUN playwright install-deps chromium
 
@@ -57,8 +59,6 @@ EXPOSE 28881
 ENV NOGUI=1
 ENV PYTHONUNBUFFERED=1
 ENV BROWSER_MODE=headful
-# Playwright 环境变量
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # 启动命令
 CMD ["python", "main.py"]
