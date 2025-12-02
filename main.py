@@ -19,6 +19,7 @@ PORT_WS = 28881
 MODELS_CONFIG_FILE = "models.json"
 STATS_FILE = "stats.json"
 API_KEY = os.environ.get("API_KEY", "your-secret-api-key-here")  # 从环境变量读取或使用默认值
+print(f"🔑 API_KEY loaded: {API_KEY[:20]}... (length: {len(API_KEY)})")
 
 # 浏览器模式配置
 BROWSER_MODE = os.environ.get("BROWSER_MODE", "manual")  # manual / headful / websocket
@@ -28,7 +29,10 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 async def verify_api_key(api_key: str = Depends(api_key_header)):
     """验证 API Key"""
+    if not api_key:
+        raise HTTPException(status_code=401, detail="API Key is required. Please provide X-API-Key header.")
     if api_key != API_KEY:
+        print(f"⚠️ API Key mismatch - Expected: {API_KEY[:10]}..., Got: {api_key[:10] if api_key else 'None'}...")
         raise HTTPException(status_code=401, detail="Invalid API Key")
     return api_key
 

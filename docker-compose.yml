@@ -16,7 +16,7 @@ services:
       - NOGUI=1
       - PYTHONUNBUFFERED=1
       - API_KEY=your-secret-api-key-here  # 请修改为您自己的密钥
-      - BROWSER_MODE=manual  # 可选: manual / websocket / headful
+      - BROWSER_MODE=headful  # 可选: manual / websocket / headful
       - DISPLAY=:99  # 用于有头浏览器模式
     restart: unless-stopped
     networks:
