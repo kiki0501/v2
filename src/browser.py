@@ -116,6 +116,11 @@ class HeadfulBrowser:
                     return False
             
             await asyncio.sleep(3)
+            
+            # 检查并处理条款对话框
+            await self._check_and_accept_terms()
+            
+            # 关闭其他 overlay
             await self._dismiss_overlays()
             
             print("✅ 已到达 Vertex AI Studio")
@@ -123,6 +128,77 @@ class HeadfulBrowser:
             
         except Exception as e:
             print(f"❌ 导航失败: {e}")
+            return False
+    
+    async def _check_and_accept_terms(self) -> bool:
+        """
+        检测并同意 Google Cloud 服务条款
+        
+        Returns:
+            是否检测到并处理了条款对话框
+        """
+        if not self.page:
+            return False
+        
+        try:
+            # 检测条款对话框的多个可能选择器
+            terms_selectors = [
+                # 条款对话框标题
+                'text=/terms.*conditions/i',
+                'text=/service.*terms/i',
+                'text=/updated.*terms/i',
+                # 条款对话框容器
+                '[role="dialog"]:has-text("terms")',
+                '[role="dialog"]:has-text("Terms")',
+                # 特定的 Google Cloud 条款
+                'text=/cloud.*terms/i',
+            ]
+            
+            terms_detected = False
+            for selector in terms_selectors:
+                try:
+                    element = await self.page.query_selector(selector)
+                    if element and await element.is_visible():
+                        terms_detected = True
+                        print("📋 检测到服务条款对话框")
+                        break
+                except:
+                    continue
+            
+            if not terms_detected:
+                return False
+            
+            # 查找并点击同意按钮
+            accept_selectors = [
+                'button:has-text("Accept")',
+                'button:has-text("Agree")',
+                'button:has-text("I agree")',
+                'button:has-text("I accept")',
+                'button:has-text("同意")',
+                'button:has-text("接受")',
+                'button[aria-label*="accept"]',
+                'button[aria-label*="agree"]',
+            ]
+            
+            for selector in accept_selectors:
+                try:
+                    button = await self.page.query_selector(selector)
+                    if button and await button.is_visible():
+                        await button.click()
+                        print("✅ 已同意服务条款")
+                        await asyncio.sleep(1)
+                        return True
+                except:
+                    continue
+            
+            # 如果没有找到按钮，尝试按 Enter 键
+            print("⚠️ 未找到同意按钮，尝试按 Enter...")
+            await self.page.keyboard.press("Enter")
+            await asyncio.sleep(1)
+            return True
+            
+        except Exception as e:
+            print(f"   ⚠️ 处理条款对话框时出错: {e}")
             return False
     
     async def _dismiss_overlays(self) -> None:
@@ -181,7 +257,8 @@ class HeadfulBrowser:
                 else:
                     print("💬 正在发送测试消息...")
                 
-                # 1. 先关闭 overlay
+                # 1. 先检查条款，再关闭其他 overlay
+                await self._check_and_accept_terms()
                 await self._dismiss_overlays()
                 
                 # 2. 等待输入框
