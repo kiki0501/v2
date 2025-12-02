@@ -18,14 +18,24 @@ PORT_API = 7860
 PORT_WS = 28881
 MODELS_CONFIG_FILE = "models.json"
 STATS_FILE = "stats.json"
+# 调试：打印所有环境变量（仅打印键名，不打印值）
+print(f"\n{'='*60}")
+print(f"🔍 环境变量调试信息:")
+print(f"   所有环境变量键: {list(os.environ.keys())}")
+print(f"   是否存在 API_KEY: {'API_KEY' in os.environ}")
+if 'API_KEY' in os.environ:
+    raw_value = os.environ['API_KEY']
+    print(f"   原始值长度: {len(raw_value)}")
+    print(f"   原始值前4字符: {raw_value[:4] if raw_value else 'None'}")
+    print(f"   原始值包含的字符类型: 字母={any(c.isalpha() for c in raw_value)}, 数字={any(c.isdigit() for c in raw_value)}, 空格={' ' in raw_value}")
+print(f"{'='*60}\n")
+
 API_KEY = os.environ.get("API_KEY", "your-secret-api-key-here").strip()  # 从环境变量读取并清理空格
 print(f"\n{'='*60}")
 print(f"🔑 API_KEY 配置信息:")
 print(f"   - 来源: {'环境变量' if 'API_KEY' in os.environ else '默认值'}")
-print(f"   - 完整值: {API_KEY}")
 print(f"   - 长度: {len(API_KEY)} 字符")
-print(f"   - 前20字符: {API_KEY[:20]}...")
-print(f"   - ASCII码(前10个): {[ord(c) for c in API_KEY[:10]]}")
+print(f"   - 前缀: {API_KEY[:4]}{'*' * min(8, len(API_KEY)-4)}")
 print(f"{'='*60}\n")
 
 # 浏览器模式配置
@@ -47,11 +57,11 @@ async def verify_api_key(bearer: HTTPAuthorizationCredentials = Depends(security
     
     if token != API_KEY:
         print(f"⚠️ API Key 验证失败:")
-        print(f"   期望: '{API_KEY[:20]}...' (长度: {len(API_KEY)})")
-        print(f"   收到: '{token[:20]}...' (长度: {len(token)})")
+        print(f"   期望长度: {len(API_KEY)}, 收到长度: {len(token)}")
+        print(f"   期望前缀: {API_KEY[:4]}{'*' * min(4, len(API_KEY)-4)}")
+        print(f"   收到前缀: {token[:4]}{'*' * min(4, len(token)-4)}")
         raise HTTPException(status_code=401, detail="Invalid API Key")
     
-    print(f"✅ API Key 验证成功")
     return token
 
 # --- Token Stats Manager ---
@@ -888,25 +898,14 @@ async def verify_dashboard_access(bearer: HTTPAuthorizationCredentials = Depends
     
     token = bearer.credentials.strip()
     
-    print(f"\n{'='*60}")
-    print(f"🔍 Dashboard API Key 验证详情:")
-    print(f"   环境变量 API_KEY:")
-    print(f"     - 值: '{API_KEY}'")
-    print(f"     - 长度: {len(API_KEY)}")
-    print(f"     - 前10字符: '{API_KEY[:10]}'")
-    print(f"     - ASCII: {[ord(c) for c in API_KEY[:10]]}")
-    print(f"   ")
-    print(f"   接收到的 Bearer Token:")
-    print(f"     - 值: '{token}'")
-    print(f"     - 长度: {len(token)}")
-    print(f"     - 前10字符: '{token[:10]}'")
-    print(f"     - ASCII: {[ord(c) for c in token[:10]]}")
-    print(f"   ")
-    print(f"   比较结果: {token == API_KEY}")
-    print(f"{'='*60}\n")
-    
+    # 只在验证失败时输出详细信息（用于调试）
     if token != API_KEY:
-        print(f"❌ Dashboard验证失败: API Key不匹配")
+        print(f"\n{'='*60}")
+        print(f"⚠️ Dashboard API Key 验证失败:")
+        print(f"   期望长度: {len(API_KEY)}, 收到长度: {len(token)}")
+        print(f"   期望前缀: {API_KEY[:4]}{'*' * min(4, len(API_KEY)-4)}")
+        print(f"   收到前缀: {token[:4]}{'*' * min(4, len(token)-4)}")
+        print(f"{'='*60}\n")
         raise HTTPException(status_code=401, detail="Invalid API Key")
     
     print("✅ Dashboard验证成功")
