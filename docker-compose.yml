@@ -15,11 +15,11 @@ services:
     environment:
       - NOGUI=1
       - PYTHONUNBUFFERED=1
-      - API_KEY=${API_KEY:-your-secret-api-key-here}  # 从 .env 文件读取
+      # ⚠️ 重要：请修改下面的 API_KEY 为你自己的密钥
+      # 或者创建 .env 文件并在其中设置 API_KEY=your-key
+      - API_KEY=${API_KEY:-your-secret-api-key-here}
       - BROWSER_MODE=${BROWSER_MODE:-headful}  # 可选: manual / websocket / headful
       - DISPLAY=:99  # 用于有头浏览器模式
-    env_file:
-      - .env  # 从 .env 文件加载环境变量
     restart: unless-stopped
     networks:
       - vertex-proxy-network
