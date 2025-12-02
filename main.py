@@ -31,40 +31,27 @@ print(f"{'='*60}\n")
 # 浏览器模式配置
 BROWSER_MODE = os.environ.get("BROWSER_MODE", "manual")  # manual / headful / websocket
 
-# API Key 认证 - 支持两种方式
+# API Key 认证 - 使用标准的 Bearer token
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 security_bearer = HTTPBearer(auto_error=False)
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-async def verify_api_key(
-    bearer: HTTPAuthorizationCredentials = Depends(security_bearer),
-    api_key: str = Depends(api_key_header)
-):
-    """验证 API Key - 支持 Authorization Bearer 和 X-API-Key 两种方式"""
-    # 优先使用 Bearer token
-    token = None
-    auth_method = None
-    
-    if bearer and bearer.credentials:
-        token = bearer.credentials.strip()
-        auth_method = "Bearer"
-    elif api_key:
-        token = api_key.strip()
-        auth_method = "X-API-Key"
-    
-    if not token:
+async def verify_api_key(bearer: HTTPAuthorizationCredentials = Depends(security_bearer)):
+    """验证 API Key - 使用 Authorization: Bearer <token>"""
+    if not bearer or not bearer.credentials:
         raise HTTPException(
             status_code=401,
-            detail="API Key is required. Please provide Authorization: Bearer <token> or X-API-Key header."
+            detail="API Key is required. Please provide Authorization: Bearer <token> header."
         )
     
+    token = bearer.credentials.strip()
+    
     if token != API_KEY:
-        print(f"⚠️ API Key 验证失败 (来源: {auth_method}):")
+        print(f"⚠️ API Key 验证失败:")
         print(f"   期望: '{API_KEY[:20]}...' (长度: {len(API_KEY)})")
         print(f"   收到: '{token[:20]}...' (长度: {len(token)})")
         raise HTTPException(status_code=401, detail="Invalid API Key")
     
-    print(f"✅ API Key 验证成功 (来源: {auth_method})")
+    print(f"✅ API Key 验证成功")
     return token
 
 # --- Token Stats Manager ---
@@ -865,47 +852,33 @@ async def dashboard():
     return FileResponse("static/dashboard.html")
 
 @app.post("/dashboard/verify")
-async def verify_dashboard_access(
-    bearer: HTTPAuthorizationCredentials = Depends(security_bearer),
-    api_key: str = Depends(api_key_header)
-):
-    """验证仪表盘访问权限 - 支持 Authorization Bearer 和 X-API-Key 两种方式"""
-    # 优先使用 Bearer token
-    token = None
-    auth_method = None
+async def verify_dashboard_access(bearer: HTTPAuthorizationCredentials = Depends(security_bearer)):
+    """验证仪表盘访问权限 - 使用 Authorization: Bearer <token>"""
+    if not bearer or not bearer.credentials:
+        print("❌ Dashboard验证失败: 未提供 Bearer token")
+        raise HTTPException(
+            status_code=401,
+            detail="API Key is required. Please provide Authorization: Bearer <token> header."
+        )
     
-    if bearer and bearer.credentials:
-        token = bearer.credentials.strip()
-        auth_method = "Bearer"
-    elif api_key:
-        token = api_key.strip()
-        auth_method = "X-API-Key"
+    token = bearer.credentials.strip()
     
     print(f"\n{'='*60}")
     print(f"🔍 Dashboard API Key 验证详情:")
-    print(f"   认证方式: {auth_method}")
     print(f"   环境变量 API_KEY:")
     print(f"     - 值: '{API_KEY}'")
     print(f"     - 长度: {len(API_KEY)}")
     print(f"     - 前10字符: '{API_KEY[:10]}'")
     print(f"     - ASCII: {[ord(c) for c in API_KEY[:10]]}")
     print(f"   ")
-    print(f"   接收到的 Token:")
+    print(f"   接收到的 Bearer Token:")
     print(f"     - 值: '{token}'")
-    print(f"     - 长度: {len(token) if token else 0}")
-    print(f"     - 前10字符: '{token[:10] if token else 'None'}'")
-    if token:
-        print(f"     - ASCII: {[ord(c) for c in token[:10]]}")
+    print(f"     - 长度: {len(token)}")
+    print(f"     - 前10字符: '{token[:10]}'")
+    print(f"     - ASCII: {[ord(c) for c in token[:10]]}")
     print(f"   ")
     print(f"   比较结果: {token == API_KEY}")
     print(f"{'='*60}\n")
-    
-    if not token:
-        print("❌ Dashboard验证失败: 未提供API Key")
-        raise HTTPException(
-            status_code=401,
-            detail="API Key is required. Please provide Authorization: Bearer <token> or X-API-Key header."
-        )
     
     if token != API_KEY:
         print(f"❌ Dashboard验证失败: API Key不匹配")
