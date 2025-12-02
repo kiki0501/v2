@@ -5,15 +5,29 @@ import uuid
 import httpx
 import uvicorn
 import sys
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import StreamingResponse
+import os
+from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.security import APIKeyHeader
 from typing import Dict, Any, Optional, List, Generator
+from stats_manager import DailyStatsManager
 
 # --- Configuration ---
 PORT_API = 7860
 PORT_WS = 28881
 MODELS_CONFIG_FILE = "models.json"
 STATS_FILE = "stats.json"
+API_KEY = os.environ.get("API_KEY", "your-secret-api-key-here")  # 从环境变量读取或使用默认值
+
+# API Key 认证
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def verify_api_key(api_key: str = Depends(api_key_header)):
+    """验证 API Key"""
+    if api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+    return api_key
 
 # --- Token Stats Manager ---
 class TokenStatsManager:
@@ -48,6 +62,7 @@ class TokenStatsManager:
             self.save_stats()
 
 stats_manager = TokenStatsManager()
+daily_stats_manager = DailyStatsManager()
 
 # --- Credential Manager ---
 class CredentialManager:
@@ -783,8 +798,37 @@ vertex_client = VertexAIClient()
 # --- FastAPI App ---
 app = FastAPI()
 
+# 挂载静态文件
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/")
+async def root():
+    """重定向到仪表盘"""
+    return FileResponse("static/dashboard.html")
+
+@app.get("/dashboard")
+async def dashboard():
+    """仪表盘页面"""
+    return FileResponse("static/dashboard.html")
+
+@app.post("/dashboard/verify")
+async def verify_dashboard_access(api_key: str = Depends(api_key_header)):
+    """验证仪表盘访问权限"""
+    if api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+    return {"status": "ok"}
+
+@app.get("/dashboard/stats")
+async def get_dashboard_stats(api_key: str = Depends(verify_api_key)):
+    """获取仪表盘统计数据"""
+    today_stats = daily_stats_manager.get_today_stats()
+    return {
+        "today": today_stats,
+        "date": daily_stats_manager.get_beijing_date()
+    }
+
 @app.get("/v1/models")
-async def list_models():
+async def list_models(api_key: str = Depends(verify_api_key)):
     # Return a list of common Vertex AI models
     # This helps clients know what's available
     current_time = int(time.time())
@@ -808,7 +852,7 @@ async def list_models():
     return data
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: Request):
+async def chat_completions(request: Request, api_key: str = Depends(verify_api_key)):
     try:
         body = await request.json()
         messages = body.get('messages', [])
@@ -824,6 +868,9 @@ async def chat_completions(request: Request):
         
         if not messages:
             raise HTTPException(status_code=400, detail="No messages provided")
+
+        # 记录请求到每日统计
+        await daily_stats_manager.record_request(model)
 
         if stream:
             return StreamingResponse(

@@ -13,7 +13,8 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制应用文件
-COPY main.py gui.py models.json ./
+COPY main.py gui.py models.json stats_manager.py ./
+COPY static/ ./static/
 
 # 创建数据目录
 RUN mkdir -p /app/data

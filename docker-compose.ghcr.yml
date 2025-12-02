@@ -24,6 +24,7 @@ services:
     environment:
       - NOGUI=1
       - PYTHONUNBUFFERED=1
+      - API_KEY=your-secret-api-key-here  # 请修改为您自己的密钥
     
     # 资源限制（可选，根据实际需求调整）
     deploy:

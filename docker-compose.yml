@@ -15,6 +15,7 @@ services:
     environment:
       - NOGUI=1
       - PYTHONUNBUFFERED=1
+      - API_KEY=your-secret-api-key-here  # 请修改为您自己的密钥
     restart: unless-stopped
     networks:
       - vertex-proxy-network

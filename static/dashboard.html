@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vertex AI Proxy - 仪表盘</title>
+    <style>
+        :root {
+            --primary-color: #3b82f6;
+            --primary-hover: #2563eb;
+            --bg-color: #f3f4f6;
+            --card-bg: #ffffff;
+            --text-main: #1f2937;
+            --text-secondary: #6b7280;
+            --error-color: #ef4444;
+            --border-color: #e5e7eb;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, 'Microsoft YaHei', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            min-height: 100vh;
+            padding: 20px;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .login-container {
+            background: var(--card-bg);
+            border-radius: 16px;
+            box-shadow: var(--shadow-lg);
+            padding: 40px;
+            width: 100%;
+            max-width: 420px;
+            margin: 100px auto;
+            animation: fadeIn 0.5s ease;
+            border: 1px solid var(--border-color);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .login-title {
+            font-size: 28px;
+            font-weight: 800;
+            color: var(--text-main);
+            margin-bottom: 8px;
+        }
+
+        .login-subtitle {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .input-group {
+            margin-bottom: 24px;
+        }
+
+        .input-label {
+            display: block;
+            color: var(--text-main);
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .input-field {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s;
+            outline: none;
+        }
+
+        .input-field:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .btn-primary {
+            width: 100%;
+            padding: 12px;
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .error-message {
+            background: #fef2f2;
+            color: #991b1b;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            border: 1px solid #fecaca;
+            display: none;
+        }
+
+        .dashboard-container {
+            display: none;
+            animation: fadeIn 0.5s ease;
+        }
+
+        .header {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        @media (min-width: 768px) {
+            .header {
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+            }
+        }
+
+        .header-title h1 {
+            font-size: 28px;
+            font-weight: 800;
+            color: var(--text-main);
+            margin-bottom: 4px;
+        }
+
+        .header-title p {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .info-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #f9fafb;
+            padding: 8px 16px;
+            border-radius: 9999px;
+            border: 1px solid var(--border-color);
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .btn-secondary, .btn-danger {
+            padding: 8px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+
+        .btn-secondary {
+            background: #f9fafb;
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: #f3f4f6;
+        }
+
+        .btn-danger {
+            background: var(--error-color);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 32px;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: var(--shadow-sm);
+            transition: all 0.3s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-lg);
+            border-color: var(--primary-color);
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .stat-value {
+            color: var(--primary-color);
+            font-size: 32px;
+            font-weight: 700;
+        }
+
+        .models-section {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--border-color);
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-main);
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #f3f4f6;
+        }
+
+        .model-list {
+            display: grid;
+            gap: 16px;
+        }
+
+        .model-card {
+            background: #f9fafb;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .model-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: var(--primary-color);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .model-card:hover {
+            background: #ffffff;
+            border-color: var(--primary-color);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .model-card:hover::before {
+            opacity: 1;
+        }
+
+        .model-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .model-name {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .model-badge {
+            background: var(--primary-color);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .model-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 16px;
+        }
+
+        .model-stat {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .model-stat-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        .model-stat-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .loading, .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            .model-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container" id="loginContainer">
+        <div class="login-header">
+            <h1 class="login-title">🔐 Vertex AI Proxy</h1>
+            <p class="login-subtitle">请输入 API Key 以访问仪表盘</p>
+        </div>
+        <div class="error-message" id="loginError"></div>
+        <form id="loginForm">
+            <div class="input-group">
+                <label class="input-label" for="apiKey">API Key</label>
+                <input type="password" id="apiKey" class="input-field" placeholder="输入您的 API Key" required>
+            </div>
+            <button type="submit" class="btn-primary">登录</button>
+        </form>
+    </div>
+
+    <div class="dashboard-container container" id="dashboardContainer">
+        <div class="header">
+            <div class="header-title">
+                <h1>📊 使用统计仪表盘</h1>
+                <p>实时监控 API 调用与 Token 消耗</p>
+            </div>
+            <div class="header-actions">
+                <div class="info-pill">
+                    <span id="currentDate">--</span>
+                </div>
+                <button class="btn-secondary" onclick="loadStats()">🔄 刷新</button>
+                <button class="btn-danger" onclick="logout()">退出登录</button>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">今日总请求</div>
+                <div class="stat-value" id="totalRequests">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">今日总 Token</div>
+                <div class="stat-value" id="totalTokens">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">提示词 Token</div>
+                <div class="stat-value" id="promptTokens">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">补全 Token</div>
+                <div class="stat-value" id="completionTokens">0</div>
+            </div>
+        </div>
+
+        <div class="models-section">
+            <h2 class="section-title">今日各模型使用情况</h2>
+            <div class="model-list" id="modelList">
+                <div class="loading">加载中...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let currentApiKey = localStorage.getItem('apiKey') || '';
+
+        if (currentApiKey) {
+            verifyAndShowDashboard();
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const apiKey = document.getElementById('apiKey').value;
+            
+            try {
+                const response = await fetch(`${API_BASE}/dashboard/verify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': apiKey
+                    }
+                });
+
+                if (response.ok) {
+                    currentApiKey = apiKey;
+                    localStorage.setItem('apiKey', apiKey);
+                    showDashboard();
+                    loadStats();
+                } else {
+                    showError('API Key 无效，请重试');
+                }
+            } catch (error) {
+                showError('连接失败，请检查网络');
+            }
+        });
+
+        function showError(message) {
+            const errorDiv = document.getElementById('loginError');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 3000);
+        }
+
+        async function verifyAndShowDashboard() {
+            try {
+                const response = await fetch(`${API_BASE}/dashboard/verify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': currentApiKey
+                    }
+                });
+
+                if (response.ok) {
+                    showDashboard();
+                    loadStats();
+                } else {
+                    logout();
+                }
+            } catch (error) {
+                logout();
+            }
+        }
+
+        function showDashboard() {
+            document.getElementById('loginContainer').style.display = 'none';
+            document.getElementById('dashboardContainer').style.display = 'block';
+        }
+
+        function logout() {
+            currentApiKey = '';
+            localStorage.removeItem('apiKey');
+            document.getElementById('loginContainer').style.display = 'block';
+            document.getElementById('dashboardContainer').style.display = 'none';
+            document.getElementById('apiKey').value = '';
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch(`${API_BASE}/dashboard/stats`, {
+                    headers: {
+                        'X-API-Key': currentApiKey
+                    }
+                });
+
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        logout();
+                        return;
+                    }
+                    throw new Error('Failed to load stats');
+                }
+
+                const data = await response.json();
+                updateStats(data);
+            } catch (error) {
+                console.error('Error loading stats:', error);
+                document.getElementById('modelList').innerHTML = 
+                    '<div class="empty-state">加载失败，请刷新重试</div>';
+            }
+        }
+
+        function updateStats(data) {
+            let totalRequests = 0;
+            let totalTokens = 0;
+            let promptTokens = 0;
+            let completionTokens = 0;
+
+            const models = data.today || {};
+            
+            for (const modelName in models) {
+                const modelData = models[modelName];
+                totalRequests += modelData.requests || 0;
+                totalTokens += modelData.total_tokens || 0;
+                promptTokens += modelData.prompt_tokens || 0;
+                completionTokens += modelData.completion_tokens || 0;
+            }
+
+            document.getElementById('totalRequests').textContent = totalRequests.toLocaleString();
+            document.getElementById('totalTokens').textContent = totalTokens.toLocaleString();
+            document.getElementById('promptTokens').textContent = promptTokens.toLocaleString();
+            document.getElementById('completionTokens').textContent = completionTokens.toLocaleString();
+            document.getElementById('currentDate').textContent = data.date || '--';
+
+            const modelList = document.getElementById('modelList');
+            
+            if (Object.keys(models).length === 0) {
+                modelList.innerHTML = '<div class="empty-state">今日暂无使用记录</div>';
+                return;
+            }
+
+            const sortedModels = Object.entries(models).sort((a, b) => 
+                (b[1].requests || 0) - (a[1].requests || 0)
+            );
+
+            modelList.innerHTML = sortedModels.map(([modelName, stats]) => `
+                <div class="model-card">
+                    <div class="model-header">
+                        <div class="model-name">${modelName}</div>
+                        <div class="model-badge">${(stats.requests || 0).toLocaleString()} 次</div>
+                    </div>
+                    <div class="model-stats">
+                        <div class="model-stat">
+                            <span class="model-stat-label">请求次数</span>
+                            <span class="model-stat-value">${(stats.requests || 0).toLocaleString()}</span>
+                        </div>
+                        <div class="model-stat">
+                            <span class="model-stat-label">总 Token</span>
+                            <span class="model-stat-value">${(stats.total_tokens || 0).toLocaleString()}</span>
+                        </div>
+                        <div class="model-stat">
+                            <span class="model-stat-label">提示词</span>
+                            <span class="model-stat-value">${(stats.prompt_tokens || 0).toLocaleString()}</span>
+                        </div>
+                        <div class="model-stat">
+                            <span class="model-stat-label">补全</span>
+                            <span class="model-stat-value">${(stats.completion_tokens || 0).toLocaleString()}</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        setInterval(() => {
+            if (currentApiKey && document.getElementById('dashboardContainer').style.display !== 'none') {
+                loadStats();
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
