@@ -246,7 +246,7 @@ class HeadfulBrowser:
             print(f"   ⚠️ 关闭 overlay 时出错: {e}")
     
     async def send_test_message(self, max_retries: int = 3) -> bool:
-        """发送测试消息触发 API 请求"""
+        """发送测试消息触发 API 请求 - 增强版"""
         if not self.page:
             return False
         
@@ -259,71 +259,164 @@ class HeadfulBrowser:
                 
                 # 1. 先检查条款，再关闭其他 overlay
                 await self._check_and_accept_terms()
+                await asyncio.sleep(0.5)
                 await self._dismiss_overlays()
+                await asyncio.sleep(0.5)
                 
-                # 2. 等待输入框
-                input_selector = 'textarea[aria-label*="message"], div[contenteditable="true"], textarea[placeholder*="message"]'
-                try:
-                    await self.page.wait_for_selector(input_selector, timeout=10000)
-                except Exception:
-                    if attempt < max_retries - 1:
-                        print("   ⚠️ 输入框未出现，刷新页面...")
-                        await self.page.reload(wait_until="domcontentloaded", timeout=15000)
-                        await asyncio.sleep(2)
-                        continue
-                    raise
+                # 2. 等待页面稳定
+                await asyncio.sleep(1)
                 
-                # 3. 使用 JavaScript 直接输入
-                success = await self.page.evaluate('''() => {
+                # 3. 使用增强的 JavaScript 输入和发送逻辑
+                result = await self.page.evaluate('''() => {
+                    // 关闭所有 overlay
                     const overlays = document.querySelectorAll('.cdk-overlay-backdrop');
-                    overlays.forEach(el => {
-                        if (el.classList.contains('cdk-overlay-backdrop')) {
-                            el.click();
-                        }
-                    });
+                    overlays.forEach(el => el.click());
                     
+                    // 多种选择器策略查找输入框
                     const selectors = [
-                        'textarea[aria-label*="message"]',
                         'div[contenteditable="true"]',
-                        'textarea[placeholder*="message"]'
+                        'textarea[aria-label*="message"]',
+                        'textarea[placeholder*="message"]',
+                        'textarea[placeholder*="prompt"]',
+                        '[role="textbox"]'
                     ];
                     
                     let input = null;
                     for (const sel of selectors) {
-                        input = document.querySelector(sel);
-                        if (input && input.offsetParent !== null) break;
-                        input = null;
+                        const elements = document.querySelectorAll(sel);
+                        for (const el of elements) {
+                            // 检查元素是否可见
+                            if (el.offsetParent !== null &&
+                                window.getComputedStyle(el).display !== 'none' &&
+                                window.getComputedStyle(el).visibility !== 'hidden') {
+                                input = el;
+                                break;
+                            }
+                        }
+                        if (input) break;
                     }
                     
-                    if (!input) return false;
+                    if (!input) {
+                        return { success: false, error: 'Input not found' };
+                    }
                     
+                    // 聚焦输入框
                     input.focus();
+                    input.click();
                     
-                    if (input.tagName === 'TEXTAREA') {
-                        input.value = 'hi';
+                    // 设置内容
+                    const testMessage = 'hi';
+                    if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
+                        input.value = testMessage;
                         input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
                     } else {
-                        input.textContent = 'hi';
-                        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'hi' }));
+                        input.textContent = testMessage;
+                        input.innerHTML = testMessage;
+                        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: testMessage }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
                     }
                     
-                    return true;
+                    return { success: true, inputType: input.tagName };
                 }''')
                 
-                if not success:
+                if not result.get('success'):
                     if attempt < max_retries - 1:
-                        print("   ⚠️ 无法设置输入内容，重试中...")
+                        print(f"   ⚠️ {result.get('error', '未知错误')}，重试中...")
                         await asyncio.sleep(1)
                         continue
-                    print("❌ 未找到可用的输入框")
+                    print(f"❌ 发送失败: {result.get('error')}")
                     return False
                 
-                await asyncio.sleep(0.1)
+                print(f"   ✍️ 已输入消息到 {result.get('inputType')} 元素")
+                await asyncio.sleep(0.3)
                 
-                # 4. 按回车发送
+                # 4. 尝试多种发送方式
+                sent = await self.page.evaluate('''() => {
+                    // 方法 1: 尝试按 Enter 键（通过事件）
+                    const input = document.querySelector('div[contenteditable="true"], textarea[aria-label*="message"], textarea[placeholder*="message"]');
+                    if (input) {
+                        const enterEvent = new KeyboardEvent('keydown', {
+                            key: 'Enter',
+                            code: 'Enter',
+                            keyCode: 13,
+                            which: 13,
+                            bubbles: true,
+                            cancelable: true
+                        });
+                        input.dispatchEvent(enterEvent);
+                        
+                        // 等待一小段时间检查是否清空
+                        return new Promise(resolve => {
+                            setTimeout(() => {
+                                const cleared = (input.value || input.textContent || '').trim() === '';
+                                resolve({ method: 'enter', cleared });
+                            }, 500);
+                        });
+                    }
+                    return { method: 'none', cleared: false };
+                }''')
+                
+                if sent.get('cleared'):
+                    print(f"   ✅ 消息已通过 {sent.get('method')} 方式发送")
+                    return True
+                
+                # 方法 2: 按 Enter 键（通过 Playwright）
+                print("   → 尝试 Playwright keyboard.press...")
                 await self.page.keyboard.press("Enter")
-                print("✅ 测试消息已发送")
-                return True
+                await asyncio.sleep(0.5)
+                
+                # 检查是否清空
+                cleared = await self.page.evaluate('''() => {
+                    const input = document.querySelector('div[contenteditable="true"], textarea[aria-label*="message"], textarea[placeholder*="message"]');
+                    return input ? (input.value || input.textContent || '').trim() === '' : false;
+                }''')
+                
+                if cleared:
+                    print("   ✅ 消息已发送（输入框已清空）")
+                    return True
+                
+                # 方法 3: 查找并点击发送按钮
+                print("   → 尝试查找发送按钮...")
+                button_clicked = await self.page.evaluate('''() => {
+                    const buttonSelectors = [
+                        'button[aria-label*="Send"]',
+                        'button[aria-label*="send"]',
+                        'button[type="submit"]',
+                        'button:has(svg)',
+                        '[role="button"][aria-label*="send"]'
+                    ];
+                    
+                    for (const sel of buttonSelectors) {
+                        const buttons = document.querySelectorAll(sel);
+                        for (const btn of buttons) {
+                            if (btn.offsetParent !== null && !btn.disabled) {
+                                btn.click();
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                }''')
+                
+                if button_clicked:
+                    await asyncio.sleep(0.5)
+                    cleared = await self.page.evaluate('''() => {
+                        const input = document.querySelector('div[contenteditable="true"], textarea[aria-label*="message"], textarea[placeholder*="message"]');
+                        return input ? (input.value || input.textContent || '').trim() === '' : false;
+                    }''')
+                    
+                    if cleared:
+                        print("   ✅ 消息已通过按钮发送")
+                        return True
+                
+                if attempt < max_retries - 1:
+                    print("   ⚠️ 消息未能发送，重试中...")
+                    await asyncio.sleep(1)
+                    continue
+                
+                print("❌ 所有发送方式均失败")
+                return False
                 
             except Exception as e:
                 error_msg = str(e)
