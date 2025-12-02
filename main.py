@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from typing import Dict, Any, Optional, List, Generator
 
 # --- Configuration ---
-PORT_API = 28880
+PORT_API = 7860
 PORT_WS = 28881
 MODELS_CONFIG_FILE = "models.json"
 STATS_FILE = "stats.json"

@@ -19,7 +19,7 @@ COPY main.py gui.py models.json ./
 RUN mkdir -p /app/data
 
 # 暴露端口
-EXPOSE 28880
+EXPOSE 7860
 EXPOSE 28881
 
 # 设置环境变量（禁用 GUI）

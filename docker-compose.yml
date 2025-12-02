@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  vertex-ai-proxy:
+    build: .
+    container_name: vertex-ai-proxy-v2
+    ports:
+      - "7860:7860"    # API 端口
+      - "28881:28881"  # WebSocket 端口
+    volumes:
+      # 挂载凭证文件以持久化
+      - ./credentials.json:/app/credentials.json
+      - ./stats.json:/app/stats.json
+      - ./auth_bundle.json:/app/auth_bundle.json
+    environment:
+      - NOGUI=1
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    networks:
+      - vertex-proxy-network
+
+networks:
+  vertex-proxy-network:
+    driver: bridge
