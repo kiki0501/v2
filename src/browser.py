@@ -392,16 +392,22 @@ class HeadfulBrowser:
                     input.focus();
                     input.click();
                     
-                    // 设置内容
+                    // 设置内容（避免 TrustedHTML 问题）
                     const testMessage = 'hi';
                     if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
                         input.value = testMessage;
                         input.dispatchEvent(new Event('input', { bubbles: true }));
                         input.dispatchEvent(new Event('change', { bubbles: true }));
                     } else {
+                        // 对于 contenteditable，只使用 textContent，不使用 innerHTML
                         input.textContent = testMessage;
-                        input.innerHTML = testMessage;
-                        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: testMessage }));
+                        // 触发输入事件
+                        input.dispatchEvent(new InputEvent('input', {
+                            bubbles: true,
+                            cancelable: true,
+                            inputType: 'insertText',
+                            data: testMessage
+                        }));
                         input.dispatchEvent(new Event('change', { bubbles: true }));
                     }
                     
