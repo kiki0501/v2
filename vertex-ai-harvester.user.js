@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Vertex AI Credential Harvester v1.0
+// @name         Vertex AI Credential Harvester v1.1
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Intercepts request headers and bodies to enable Headful Proxying.
 // @author       Roo
 // @match        https://console.cloud.google.com/*
@@ -14,7 +14,13 @@
 (function() {
     'use strict';
 
-    console.log('Harvester: Initializing...');
+    console.log('Harvester v1.1: Initializing...');
+
+    // --- 全局状态管理 ---
+    let isRefreshing = false;  // 防止重复刷新
+    let lastCredentialTime = 0;  // 上次获取凭证的时间
+    let connectionAttempts = 0;  // 连接尝试次数
+    let heartbeatInterval = null;  // 心跳定时器
 
     // --- UI Logger (Mac Style) ---
     let logContainer = null;
@@ -63,7 +69,7 @@
             display: 'flex',
             gap: '6px'
         });
-        
+
         ['#ff5f56', '#ffbd2e', '#27c93f'].forEach(color => {
             const dot = document.createElement('div');
             Object.assign(dot.style, {
@@ -122,7 +128,7 @@
     function logToScreen(message) {
         console.log(message);
         createUI();
-        
+
         const entry = document.createElement('div');
         Object.assign(entry.style, {
             marginBottom: '4px',
@@ -133,10 +139,10 @@
         const time = document.createElement('span');
         time.textContent = `[${new Date().toLocaleTimeString()}] `;
         time.style.color = 'rgba(255, 255, 255, 0.4)';
-        
+
         const text = document.createElement('span');
         text.textContent = message;
-        
+
         // Color coding based on message type
         if (message.includes('✅')) text.style.color = '#4cd964';
         else if (message.includes('❌') || message.includes('⚠️')) text.style.color = '#ff3b30';
@@ -145,69 +151,153 @@
 
         entry.appendChild(time);
         entry.appendChild(text);
-        
+
         logContent.appendChild(entry);
         logContent.scrollTop = logContent.scrollHeight;
     }
 
+    // --- Web Worker for Reliable Timers ---
+    let keepaliveWorker = null;
+
+    function startKeepaliveWorker() {
+        const workerCode = () => {
+            // Worker is not affected by background tab throttling
+            const HEARTBEAT_INTERVAL = 30000;  // 30 seconds
+            const KEEPALIVE_CHECK_INTERVAL = 60000; // 1 minute
+
+            // Heartbeat
+            setInterval(() => {
+                self.postMessage({ command: 'ping' });
+            }, HEARTBEAT_INTERVAL);
+
+            // Refresh check
+            setInterval(() => {
+                self.postMessage({ command: 'check_refresh' });
+            }, KEEPALIVE_CHECK_INTERVAL);
+        };
+
+        try {
+            const blob = new Blob(['(', workerCode.toString(), ')()'], { type: 'application/javascript' });
+            const url = URL.createObjectURL(blob);
+            keepaliveWorker = new Worker(url);
+
+            keepaliveWorker.onmessage = (e) => {
+                const { command } = e.data;
+                if (command === 'ping') {
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        socket.send(JSON.stringify({ type: 'ping' }));
+                    }
+                } else if (command === 'check_refresh') {
+                    // This replaces the old setInterval-based keepalive
+                    if (window.__LAST_RECAPTCHA_SITEKEY__ && !isRefreshing) {
+                        const timeSinceLastCred = Date.now() - lastCredentialTime;
+                        if (timeSinceLastCred > CREDENTIAL_REFRESH_INTERVAL) {
+                            logToScreen('⏱️ Auto-refreshing token (Keepalive via Worker)...');
+                            attemptRefresh();
+                        }
+                    }
+                }
+            };
+            logToScreen('✅ Keepalive Worker started successfully.');
+            URL.revokeObjectURL(url); // Clean up
+        } catch (e) {
+            logToScreen(`❌ Failed to start Keepalive Worker: ${e}`);
+            // Fallback to less reliable setInterval if worker fails
+            startHeartbeat();
+            startLegacyKeepalive();
+        }
+    }
+
+
     // --- WebSocket Communication ---
     let socket = null;
     const WEBSOCKET_URL = 'ws://127.0.0.1:28881';
-    let reconnectAttempts = 0;
-    const MAX_RECONNECT_ATTEMPTS = 10;
+    const CREDENTIAL_REFRESH_INTERVAL = 3 * 60 * 1000;  // 3分钟自动刷新
 
     function connect() {
+        connectionAttempts++;
+        logToScreen(`🔄 Connecting to backend (attempt ${connectionAttempts})...`);
+
         try {
             socket = new WebSocket(WEBSOCKET_URL);
-            
-            socket.onopen = () => {
-                logToScreen(`✅ Connected to ${WEBSOCKET_URL}`);
-                reconnectAttempts = 0; // 重置重连计数
-                // Identify as harvester
-                socket.send(JSON.stringify({ type: 'identify', client: 'harvester' }));
-            };
-            
-            socket.onmessage = (event) => {
-                try {
-                    const msg = JSON.parse(event.data);
-                    if (msg.type === 'refresh_token') {
-                        logToScreen('🔄 Received refresh request from backend.');
-                        attemptRefresh().catch(err => {
-                            logToScreen(`❌ Refresh failed: ${err}`);
-                        });
-                    } else if (msg.type === 'ping') {
-                        // 响应心跳
-                        socket.send(JSON.stringify({ type: 'pong' }));
-                    }
-                } catch (e) {
-                    console.error('WS Parse Error', e);
-                    logToScreen(`⚠️ WebSocket message parse error: ${e}`);
-                }
-            };
-
-            socket.onclose = (event) => {
-                logToScreen(`🔌 WebSocket disconnected (Code: ${event.code})`);
-                reconnectAttempts++;
-                
-                if (reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
-                    const delay = Math.min(2000 * reconnectAttempts, 30000); // 最多等待 30 秒
-                    logToScreen(`🔄 Reconnecting in ${delay/1000}s... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
-                    setTimeout(connect, delay);
-                } else {
-                    logToScreen(`❌ Max reconnection attempts reached. Please refresh the page.`);
-                }
-            };
-            
-            socket.onerror = (err) => {
-                console.error('WS Error', err);
-                logToScreen(`⚠️ WebSocket error occurred`);
-            };
         } catch (e) {
-            logToScreen(`❌ WebSocket connection failed: ${e}`);
-            reconnectAttempts++;
-            if (reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
-                setTimeout(connect, 2000);
+            logToScreen(`❌ WebSocket creation failed: ${e}`);
+            scheduleReconnect();
+            return;
+        }
+
+        socket.onopen = () => {
+            logToScreen(`✅ Connected to ${WEBSOCKET_URL}`);
+            connectionAttempts = 0;  // 重置连接计数
+
+            // Identify as harvester
+            socket.send(JSON.stringify({ type: 'identify', client: 'harvester' }));
+
+            // 启动心跳 (由Worker管理)
+            // startHeartbeat(); // This is now handled by the worker
+
+            // 连接成功后，如果凭证过期或不存在，自动刷新
+            const timeSinceLastCred = Date.now() - lastCredentialTime;
+            if (lastCredentialTime === 0 || timeSinceLastCred > CREDENTIAL_REFRESH_INTERVAL) {
+                logToScreen('🔄 Auto-refreshing credentials on connect...');
+                setTimeout(() => attemptRefresh(), 2000);  // 等待页面稳定
             }
+        };
+
+        socket.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'refresh_token') {
+                    logToScreen('🔄 Received refresh request from backend.');
+                    if (!isRefreshing) {
+                        attemptRefresh();
+                    } else {
+                        logToScreen('⚠️ Refresh already in progress, skipping...');
+                    }
+                } else if (msg.type === 'hello') {
+                    logToScreen('👋 Backend handshake received.');
+                } else if (msg.type === 'pong') {
+                    // 心跳响应
+                }
+            } catch (e) {
+                console.error('WS Parse Error', e);
+            }
+        };
+
+        socket.onclose = (event) => {
+            logToScreen(`⚠️ WebSocket closed (code: ${event.code})`);
+            // stopHeartbeat(); // Worker will continue trying to send pings
+            scheduleReconnect();
+        };
+
+        socket.onerror = (err) => {
+            console.error('WS Error', err);
+            logToScreen('❌ WebSocket error occurred');
+        };
+    }
+
+    function scheduleReconnect() {
+        // 使用指数退避策略
+        const delay = Math.min(2000 * Math.pow(1.5, connectionAttempts), 30000);
+        logToScreen(`🔄 Reconnecting in ${Math.round(delay/1000)}s...`);
+        setTimeout(connect, delay);
+    }
+
+    // DEPRECATED: The old heartbeat functions are no longer needed as the worker handles this.
+    // They are kept here as a potential fallback if the worker fails to initialize.
+    function startHeartbeat() {
+        stopHeartbeat();  // 清除旧的心跳
+        heartbeatInterval = setInterval(() => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'ping' }));
+            }
+        }, 30000); // Hardcoded interval for fallback
+    }
+
+    function stopHeartbeat() {
+        if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
         }
     }
 
@@ -223,10 +313,10 @@
             window.__LAST_RECAPTCHA_SITEKEY__ = key;
             return key;
         }
-        
+
         // Method 2: Look for common Google Cloud Console config objects
         // This is harder as it's minified, but sometimes exposed.
-        
+
         return null;
     }
 
@@ -235,8 +325,14 @@
     const REFRESH_FLAG_KEY = '__HARVESTER_REFRESH_PENDING__';
 
     async function attemptRefresh() {
+        if (isRefreshing) {
+            logToScreen('⚠️ Refresh already in progress, skipping...');
+            return;
+        }
+
+        isRefreshing = true;
         logToScreen('🤖 Starting Auto-Refresh Sequence...');
-        
+
         try {
             // Check if we are on the correct URL (looser check)
             // We check if the URL contains the specific model parameter
@@ -244,19 +340,20 @@
                 logToScreen(`🔄 Redirecting to target model URL for refresh...`);
                 logToScreen(`   Current: ${window.location.href}`);
                 logToScreen(`   Target:  ${TARGET_REFRESH_URL}`);
-                
+
                 sessionStorage.setItem(REFRESH_FLAG_KEY, 'true');
                 window.location.href = TARGET_REFRESH_URL;
-                return;
+                return;  // isRefreshing 会在页面加载后重置
             }
 
             // 等待页面完全加载
             await waitForPageReady();
-            
+
             // If we are already on the URL, proceed to send message
             await sendDummyMessage();
             logToScreen('✅ Auto-refresh sequence completed.');
-            
+            lastCredentialTime = Date.now();
+
             // Notify backend that the UI is stable and ready for retries
             // Add a small delay to ensure the model has responded and the token is validated
             setTimeout(() => {
@@ -269,379 +366,182 @@
             logToScreen(`❌ Auto-refresh failed: ${e}`);
             // 通知后端刷新失败
             if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({ type: 'refresh_failed', error: e.toString() }));
+                socket.send(JSON.stringify({ type: 'refresh_failed', error: String(e) }));
             }
+        } finally {
+            isRefreshing = false;
         }
     }
 
-    // 等待页面完全加载就绪
     async function waitForPageReady() {
-        const MAX_WAIT = 10000; // 10 秒超时
-        const startTime = Date.now();
-        
-        logToScreen('⏳ Waiting for page to be ready...');
-        
-        while (Date.now() - startTime < MAX_WAIT) {
-            // 检查页面是否加载完成
-            if (document.readyState === 'complete') {
-                // 检查是否能找到编辑器
-                const editor = await findEditor();
-                if (editor) {
-                    logToScreen('✅ Page is ready.');
-                    await new Promise(r => setTimeout(r, 500)); // 额外等待一点时间
-                    return;
-                }
-            }
-            await new Promise(r => setTimeout(r, 500));
-        }
-        
-        logToScreen('⚠️ Page ready timeout, proceeding anyway...');
-    }
+        const MAX_WAIT = 15000;  // 最多等待15秒
+        const CHECK_INTERVAL = 500;  // 每500ms检查一次
+        let waited = 0;
 
-    // 关闭页面上的 overlay 遮罩层
-    async function dismissOverlays() {
-        try {
-            // 1. 点击所有 backdrop 关闭对话框
-            const backdrops = document.querySelectorAll('.cdk-overlay-backdrop');
-            backdrops.forEach(backdrop => {
-                if (backdrop.offsetParent !== null) {
-                    backdrop.click();
-                }
-            });
-            
-            // 2. 按 Escape 键关闭任何模态
-            document.dispatchEvent(new KeyboardEvent('keydown', {
-                key: 'Escape',
-                code: 'Escape',
-                keyCode: 27,
-                which: 27,
-                bubbles: true
-            }));
-            
-            // 3. 移除阻挡的 overlay 容器内容（最后手段）
-            const overlayContainer = document.querySelector('.cdk-overlay-container');
-            if (overlayContainer) {
-                // 检查是否有活跃的 backdrop
-                const activeBackdrop = overlayContainer.querySelector('.cdk-overlay-backdrop-showing');
-                if (activeBackdrop) {
-                    // 尝试找到并点击关闭按钮
-                    const closeButtons = overlayContainer.querySelectorAll(
-                        'button[aria-label*="close"], button[aria-label*="Close"], ' +
-                        'button[aria-label*="关闭"], .mat-dialog-close, ' +
-                        'button.close, [mat-dialog-close]'
-                    );
-                    closeButtons.forEach(btn => btn.click());
-                }
+        while (waited < MAX_WAIT) {
+            // 检查编辑器是否存在
+            const editor = document.querySelector('div[contenteditable="true"]');
+            if (editor) {
+                logToScreen('✅ Page ready - editor found');
+                return;
             }
-            
-            // 等待 overlay 动画完成
-            await new Promise(r => setTimeout(r, 300));
-            
-        } catch (e) {
-            logToScreen(`⚠️ 关闭 overlay 时出错: ${e}`);
+
+            await new Promise(r => setTimeout(r, CHECK_INTERVAL));
+            waited += CHECK_INTERVAL;
         }
+
+        throw new Error('Page did not become ready in time');
     }
 
     async function sendDummyMessage() {
-        const MAX_RETRIES = 5;
+        const MAX_RETRIES = 8;
         let attempts = 0;
 
         while (attempts < MAX_RETRIES) {
             attempts++;
             try {
-                // 先关闭任何可能存在的 overlay 遮罩层
-                await dismissOverlays();
-                
-                // 智能查找编辑器 - 多种选择器策略
-                const editor = await findEditor();
-                
+                // Find editor - prioritize contenteditable div
+                const editor = document.querySelector('div[contenteditable="true"]');
+
                 if (!editor) {
                     logToScreen(`⚠️ Editor not found (Attempt ${attempts}/${MAX_RETRIES}). Waiting...`);
+                    await new Promise(r => setTimeout(r, 1500));
+                    continue;
+                }
+
+                // 检查编辑器是否可见和可交互
+                const rect = editor.getBoundingClientRect();
+                if (rect.width === 0 || rect.height === 0) {
+                    logToScreen(`⚠️ Editor not visible (Attempt ${attempts}/${MAX_RETRIES}). Waiting...`);
                     await new Promise(r => setTimeout(r, 1000));
                     continue;
                 }
 
                 logToScreen(`✍️ Entering "Hello" (Attempt ${attempts})...`);
-                
-                // 确保编辑器获得焦点
-                await ensureFocus(editor);
-                
-                // 设置文本内容
-                await setEditorContent(editor, 'Hello');
-                
-                // 触发输入事件
-                editor.dispatchEvent(new Event('input', { bubbles: true }));
-                editor.dispatchEvent(new Event('change', { bubbles: true }));
-                await new Promise(r => setTimeout(r, 500));
 
-                logToScreen('🚀 Attempting to send message...');
-                
-                // 尝试多种发送方法
-                const sent = await trySendMessage(editor);
-                
-                if (sent) {
-                    logToScreen('✅ Message sent successfully.');
+                // 清除现有内容 - 使用 textContent 而非 innerHTML 以避免 Trusted Types 错误
+                editor.textContent = '';
+                await new Promise(r => setTimeout(r, 100));
+
+                editor.focus();
+                editor.click(); // Ensure focus
+
+                // 使用多种方法尝试输入文本
+                // Method 1: 直接设置 textContent
+                editor.textContent = 'Hello';
+
+                // Method 2: 如果 textContent 不生效，尝试使用 Selection API
+                if (editor.textContent.trim() === '') {
+                    const selection = window.getSelection();
+                    const range = document.createRange();
+                    range.selectNodeContents(editor);
+                    range.collapse(false);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                    document.execCommand('insertText', false, 'Hello');
+                }
+
+                // Method 3: 如果还是不行，尝试使用 InputEvent
+                if (editor.textContent.trim() === '') {
+                    const inputEvent = new InputEvent('beforeinput', {
+                        bubbles: true,
+                        cancelable: true,
+                        inputType: 'insertText',
+                        data: 'Hello'
+                    });
+                    editor.dispatchEvent(inputEvent);
+                }
+
+                // Dispatch multiple events to trigger framework bindings
+                editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+                editor.dispatchEvent(new Event('change', { bubbles: true }));
+                await new Promise(r => setTimeout(r, 600));
+
+                logToScreen('🚀 Pressing Enter to send...');
+
+                // 尝试多种方式发送
+                // Method 1: KeyboardEvent
+                const enterEvent = new KeyboardEvent('keydown', {
+                    key: 'Enter',
+                    code: 'Enter',
+                    keyCode: 13,
+                    which: 13,
+                    bubbles: true,
+                    cancelable: true,
+                    composed: true
+                });
+                editor.dispatchEvent(enterEvent);
+
+                // Check if text was cleared (success indicator)
+                await new Promise(r => setTimeout(r, 1200));
+                if (editor.textContent.trim() === '') {
+                    logToScreen('✅ Message sent successfully (Editor cleared).');
                     return;
                 }
-                
-                logToScreen(`⚠️ Send failed on attempt ${attempts}. Retrying...`);
-                
-            } catch (e) {
-                // 检查是否是 overlay 遮挡错误
-                if (e.toString().includes('intercepts pointer events') ||
-                    e.toString().includes('not clickable')) {
-                    logToScreen(`⚠️ 检测到 overlay 遮挡，尝试关闭...`);
-                    await dismissOverlays();
-                    await new Promise(r => setTimeout(r, 500));
-                } else {
-                    logToScreen(`❌ Error in send attempt: ${e}`);
+
+                // Method 2: Try clicking send button
+                logToScreen('⚠️ Editor not cleared. Trying send button...');
+
+                // 尝试多种选择器找到发送按钮
+                const sendBtnSelectors = [
+                    'button[aria-label*="Send"]',
+                    'button[aria-label*="send"]',
+                    'button[data-testid*="send"]',
+                    'button.send-button',
+                    '[role="button"][aria-label*="Send"]'
+                ];
+
+                let sendBtn = null;
+                for (const selector of sendBtnSelectors) {
+                    sendBtn = document.querySelector(selector);
+                    if (sendBtn && !sendBtn.disabled) break;
                 }
+
+                if (sendBtn && !sendBtn.disabled) {
+                    sendBtn.click();
+                    await new Promise(r => setTimeout(r, 1200));
+                    if (editor.textContent.trim() === '') {
+                        logToScreen('✅ Message sent successfully (Send button).');
+                        return;
+                    }
+                }
+
+                // Method 3: Try pressing Enter on the button
+                if (sendBtn) {
+                    sendBtn.focus();
+                    sendBtn.dispatchEvent(enterEvent);
+                    await new Promise(r => setTimeout(r, 1000));
+                    if (editor.textContent.trim() === '') {
+                        logToScreen('✅ Message sent successfully (Button Enter).');
+                        return;
+                    }
+                }
+
+                logToScreen(`⚠️ Send attempt ${attempts} failed, retrying...`);
+
+            } catch (e) {
+                logToScreen(`❌ Error in send attempt: ${e}`);
             }
-            
-            await new Promise(r => setTimeout(r, 1000));
+
+            await new Promise(r => setTimeout(r, 1500));
         }
         throw "Failed to send message after multiple attempts";
     }
 
-    // 智能查找编辑器元素
-    async function findEditor() {
-        const selectors = [
-            'textarea[aria-label*="message"]',
-            'div[contenteditable="true"]',
-            'textarea[placeholder*="message" i]',
-            'textarea[placeholder*="prompt" i]',
-            'textarea[placeholder*="消息"]',
-            'div[role="textbox"]',
-            'div.input-field[contenteditable="true"]',
-            '[data-placeholder][contenteditable="true"]'
-        ];
-        
-        for (const selector of selectors) {
-            const elements = document.querySelectorAll(selector);
-            for (const el of elements) {
-                // 检查元素是否可见且可编辑
-                if (isElementVisible(el) && !el.disabled && !el.readOnly) {
-                    logToScreen(`🔍 Found editor using: ${selector}`);
-                    return el;
+    // --- Auto-Keepalive (Now handled by Web Worker) ---
+    function startLegacyKeepalive() {
+        logToScreen('⚠️ Using legacy setInterval for keepalive.');
+        setInterval(() => {
+            if (window.__LAST_RECAPTCHA_SITEKEY__ && !isRefreshing) {
+                const timeSinceLastCred = Date.now() - lastCredentialTime;
+                if (timeSinceLastCred > CREDENTIAL_REFRESH_INTERVAL) {
+                    logToScreen('⏰ Auto-refreshing token (Legacy Keepalive)...');
+                    attemptRefresh();
                 }
             }
-        }
-        return null;
+        }, 60 * 1000); // 每分钟检查一次
     }
 
-    // 检查元素是否可见
-    function isElementVisible(el) {
-        if (!el) return false;
-        const style = window.getComputedStyle(el);
-        return style.display !== 'none' &&
-               style.visibility !== 'hidden' &&
-               style.opacity !== '0' &&
-               el.offsetParent !== null;
-    }
-
-    // 确保编辑器获得焦点
-    async function ensureFocus(editor) {
-        editor.focus();
-        editor.click();
-        
-        // 尝试将光标移到末尾
-        if (window.getSelection && document.createRange) {
-            const range = document.createRange();
-            range.selectNodeContents(editor);
-            range.collapse(false);
-            const sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
-        }
-        
-        await new Promise(r => setTimeout(r, 200));
-    }
-
-    // 设置编辑器内容
-    async function setEditorContent(editor, text) {
-        if (editor.tagName.toLowerCase() === 'textarea' || editor.tagName.toLowerCase() === 'input') {
-            editor.value = text;
-        } else {
-            editor.textContent = text;
-            // 尝试设置 innerHTML 以防某些框架需要
-            if (editor.innerHTML !== text) {
-                editor.innerHTML = text;
-            }
-        }
-    }
-
-    // 尝试发送消息 - 多种策略
-    async function trySendMessage(editor) {
-        // 策略 0: 使用 JavaScript 直接操作（绕过 overlay）
-        const jsSent = await tryJavaScriptSend(editor);
-        if (jsSent) return true;
-        
-        // 策略 1: Enter 键
-        const enterSent = await tryEnterKey(editor);
-        if (enterSent) return true;
-        
-        // 策略 2: Ctrl+Enter 组合键
-        const ctrlEnterSent = await tryCtrlEnter(editor);
-        if (ctrlEnterSent) return true;
-        
-        // 策略 3: 点击发送按钮
-        const buttonSent = await tryClickSendButton(editor);
-        if (buttonSent) return true;
-        
-        return false;
-    }
-
-    // 尝试使用 JavaScript 直接发送（绕过 overlay 问题）
-    async function tryJavaScriptSend(editor) {
-        logToScreen('   → Trying JavaScript direct send...');
-        try {
-            // 使用 JavaScript 直接聚焦和输入
-            const success = (() => {
-                // 关闭所有 overlay
-                const overlays = document.querySelectorAll('.cdk-overlay-backdrop, .cdk-overlay-container > *');
-                overlays.forEach(el => {
-                    if (el.classList.contains('cdk-overlay-backdrop')) {
-                        el.click();  // 点击背景关闭
-                    }
-                });
-                
-                // 查找输入框
-                const selectors = [
-                    'textarea[aria-label*="message"]',
-                    'div[contenteditable="true"]',
-                    'textarea[placeholder*="message"]',
-                    'textarea[placeholder*="消息"]'
-                ];
-                
-                let input = null;
-                for (const sel of selectors) {
-                    input = document.querySelector(sel);
-                    if (input && input.offsetParent !== null) break;
-                    input = null;
-                }
-                
-                if (!input) return false;
-                
-                // 聚焦输入框
-                input.focus();
-                
-                // 设置内容
-                if (input.tagName === 'TEXTAREA') {
-                    input.value = 'Hello';
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                } else {
-                    // contenteditable
-                    input.textContent = 'Hello';
-                    input.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Hello' }));
-                }
-                
-                return true;
-            })();
-            
-            if (!success) {
-                return false;
-            }
-            
-            await new Promise(r => setTimeout(r, 100));
-            
-            // 按回车发送
-            const enterEvent = new KeyboardEvent('keydown', {
-                key: 'Enter',
-                code: 'Enter',
-                keyCode: 13,
-                which: 13,
-                bubbles: true,
-                cancelable: true
-            });
-            editor.dispatchEvent(enterEvent);
-            
-            await new Promise(r => setTimeout(r, 1000));
-            return isEditorCleared(editor);
-            
-        } catch (e) {
-            logToScreen(`   ⚠️ JavaScript send failed: ${e}`);
-            return false;
-        }
-    }
-
-    // 尝试 Enter 键发送
-    async function tryEnterKey(editor) {
-        logToScreen('   → Trying Enter key...');
-        const enterEvent = new KeyboardEvent('keydown', {
-            key: 'Enter',
-            code: 'Enter',
-            keyCode: 13,
-            which: 13,
-            bubbles: true,
-            cancelable: true
-        });
-        editor.dispatchEvent(enterEvent);
-        
-        await new Promise(r => setTimeout(r, 1000));
-        return isEditorCleared(editor);
-    }
-
-    // 尝试 Ctrl+Enter 组合键
-    async function tryCtrlEnter(editor) {
-        logToScreen('   → Trying Ctrl+Enter...');
-        const ctrlEnterEvent = new KeyboardEvent('keydown', {
-            key: 'Enter',
-            code: 'Enter',
-            keyCode: 13,
-            which: 13,
-            ctrlKey: true,
-            bubbles: true,
-            cancelable: true
-        });
-        editor.dispatchEvent(ctrlEnterEvent);
-        
-        await new Promise(r => setTimeout(r, 1000));
-        return isEditorCleared(editor);
-    }
-
-    // 尝试点击发送按钮
-    async function tryClickSendButton(editor) {
-        logToScreen('   → Trying send button...');
-        
-        const buttonSelectors = [
-            'button[aria-label*="Send" i]',
-            'button[aria-label*="发送" i]',
-            'button[type="submit"]',
-            'button:has(svg[data-icon="send"])',
-            'button:has(.send-icon)',
-            '[role="button"][aria-label*="send" i]'
-        ];
-        
-        for (const selector of buttonSelectors) {
-            const buttons = document.querySelectorAll(selector);
-            for (const btn of buttons) {
-                if (isElementVisible(btn) && !btn.disabled) {
-                    logToScreen(`   → Found button: ${selector}`);
-                    btn.click();
-                    await new Promise(r => setTimeout(r, 1000));
-                    if (isEditorCleared(editor)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    // 检查编辑器是否已清空
-    function isEditorCleared(editor) {
-        const content = (editor.value || editor.textContent || editor.innerText || '').trim();
-        return content === '';
-    }
-
-    // --- Auto-Keepalive ---
-    // Once we have the SiteKey, refresh automatically every 4 minutes
-    setInterval(() => {
-        if (window.__LAST_RECAPTCHA_SITEKEY__) {
-            logToScreen('⏰ Auto-refreshing token (Keepalive)...');
-            attemptRefresh();
-        }
-    }, 4 * 60 * 1000); // 4 minutes
 
     function sendCredentials(data) {
         if (socket && socket.readyState === WebSocket.OPEN) {
@@ -649,7 +549,14 @@
                 type: 'credentials_harvested',
                 data: data
             }));
+            lastCredentialTime = Date.now();
             logToScreen(`📤 Sent captured request data to backend.`);
+        } else {
+            logToScreen(`⚠️ Cannot send credentials - WebSocket not connected`);
+            // 尝试重新连接
+            if (!socket || socket.readyState === WebSocket.CLOSED) {
+                connect();
+            }
         }
     }
 
@@ -657,7 +564,7 @@
     function hookRecaptcha() {
         // Hook into window.grecaptcha to capture site keys and potentially trigger executions
         let originalExecute = null;
-        
+
         const hook = (grecaptchaInstance) => {
              if (grecaptchaInstance && grecaptchaInstance.execute && !grecaptchaInstance._hooked) {
                 logToScreen('🎣 reCAPTCHA detected. Hooking execute...');
@@ -720,7 +627,7 @@
                     // Added 'Predict' and 'Image' to catch more variations
                     if (body && (body.includes('StreamGenerateContent') || body.includes('generateContent') || body.includes('Predict') || body.includes('Image'))) {
                         logToScreen(`🎯 Captured Target Request: ${this._url.substring(0, 50)}...`);
-                        
+
                         // Pretty print the body to screen for user inspection
                         try {
                             const parsedBody = JSON.parse(body);
@@ -760,7 +667,7 @@
                             logToScreen(`⚠️ Could not parse request body for logging: ${parseErr}`);
                         }
                         // ------------------------------------------------
-                        
+
                         // Send immediately
                         sendCredentials(harvestData);
                     }
@@ -773,60 +680,59 @@
     }
 
     // --- Init ---
-    function initialize() {
-        try {
-            connect();
-            intercept();
-            hookRecaptcha();
-            logToScreen('✅ Harvester Armed. Please send a message in Vertex AI Studio.');
+    window.addEventListener('DOMContentLoaded', () => {
+        connect();
+        intercept();
+        hookRecaptcha();
+        startKeepaliveWorker(); // Start the reliable timer
+        logToScreen('Harvester v1.1 Armed. Please send a message in Vertex AI Studio.');
 
-            // Check for pending refresh
-            if (sessionStorage.getItem(REFRESH_FLAG_KEY) === 'true') {
-                logToScreen('🔄 Resuming refresh sequence after redirect...');
-                sessionStorage.removeItem(REFRESH_FLAG_KEY);
-                // Wait a bit for the editor to be ready
-                setTimeout(() => {
-                    attemptRefresh().catch(err => {
-                        logToScreen(`❌ Resume refresh failed: ${err}`);
-                    });
-                }, 5000); // 5 seconds delay to ensure page load
-            }
-        } catch (e) {
-            logToScreen(`❌ Initialization failed: ${e}`);
-            console.error('Harvester Init Error:', e);
+        // Check for pending refresh
+        if (sessionStorage.getItem(REFRESH_FLAG_KEY) === 'true') {
+            logToScreen('🔄 Resuming refresh sequence after redirect...');
+            sessionStorage.removeItem(REFRESH_FLAG_KEY);
+            isRefreshing = true;  // 标记正在刷新
+            // Wait a bit for the editor to be ready
+            setTimeout(async () => {
+                try {
+                    await waitForPageReady();
+                    await sendDummyMessage();
+                    logToScreen('✅ Refresh completed after redirect.');
+                    lastCredentialTime = Date.now();
+
+                    setTimeout(() => {
+                        if (socket && socket.readyState === WebSocket.OPEN) {
+                            socket.send(JSON.stringify({ type: 'refresh_complete' }));
+                            logToScreen('👍 Sent refresh completion signal to backend.');
+                        }
+                    }, 1500);
+                } catch (e) {
+                    logToScreen(`❌ Refresh after redirect failed: ${e}`);
+                } finally {
+                    isRefreshing = false;
+                }
+            }, 3000); // 3 seconds delay to ensure page load
         }
-    }
+    });
 
-    // 监听 DOM 加载完成
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initialize);
-    } else {
-        // DOM 已经加载完成
-        initialize();
-    }
-
-    // 页面可见性变化时重新连接（如果断开）
+    // 页面可见性变化时的处理
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
+            logToScreen('👁️ Page became visible');
+            // 检查WebSocket连接状态
             if (!socket || socket.readyState !== WebSocket.OPEN) {
-                logToScreen('👀 Page became visible, checking connection...');
-                setTimeout(() => {
-                    if (!socket || socket.readyState !== WebSocket.OPEN) {
-                        logToScreen('🔄 Reconnecting WebSocket...');
-                        connect();
-                    }
-                }, 1000);
+                logToScreen('🔄 Reconnecting WebSocket...');
+                connect();
             }
         }
     });
 
-    // 全局错误处理
-    window.addEventListener('error', (event) => {
-        console.error('Global Error:', event.error);
-    });
-
-    window.addEventListener('unhandledrejection', (event) => {
-        console.error('Unhandled Promise Rejection:', event.reason);
+    // 页面卸载前清理
+    window.addEventListener('beforeunload', () => {
+        stopHeartbeat();
+        if (socket) {
+            socket.close();
+        }
     });
 
 })();
