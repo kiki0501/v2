@@ -928,7 +928,9 @@ async def chat_completions(request: Request, api_key: str = Depends(verify_api_k
         body = await request.json()
         messages = body.get('messages', [])
         model = body.get('model', 'gemini-1.5-pro')
-        stream = body.get('stream', False) # Extract stream flag
+        stream = body.get('stream', False)  # 默认关闭流式输出
+        # 强制关闭流式输出
+        stream = False
         
         # Extract generation parameters
         temperature = body.get('temperature')
