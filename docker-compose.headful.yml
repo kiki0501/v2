@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  vertex-ai-proxy-headful:
+    build: .
+    container_name: vertex-ai-proxy-v2-headful
+    ports:
+      - "7860:7860"    # API 端口
+      - "5900:5900"    # VNC 端口（可选，用于远程查看浏览器）
+    volumes:
+      # 挂载凭证文件以持久化
+      - ./credentials.json:/app/credentials.json
+      - ./stats.json:/app/stats.json
+      - ./auth_bundle.json:/app/auth_bundle.json
+      # 挂载 X11 socket（用于显示浏览器窗口）
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    environment:
+      - NOGUI=1
+      - PYTHONUNBUFFERED=1
+      - API_KEY=your-secret-api-key-here  # 请修改为您自己的密钥
+      - BROWSER_MODE=headful  # 有头浏览器模式
+      - DISPLAY=${DISPLAY:-:99}  # X11 显示
+    # 如果需要在 Docker 中运行 GUI 应用，需要特权模式或设备访问
+    devices:
+      - /dev/dri:/dev/dri  # GPU 加速（如果可用）
+    shm_size: '2gb'  # 增加共享内存，浏览器需要
+    restart: unless-stopped
+    networks:
+      - vertex-proxy-network
+
+networks:
+  vertex-proxy-network:
+    driver: bridge

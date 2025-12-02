@@ -20,6 +20,9 @@ MODELS_CONFIG_FILE = "models.json"
 STATS_FILE = "stats.json"
 API_KEY = os.environ.get("API_KEY", "your-secret-api-key-here")  # 从环境变量读取或使用默认值
 
+# 浏览器模式配置
+BROWSER_MODE = os.environ.get("BROWSER_MODE", "manual")  # manual / headful / websocket
+
 # API Key 认证
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -159,6 +162,12 @@ class CredentialManager:
 
 cred_manager = CredentialManager()
 
+# --- 浏览器模式全局变量 ---
+_headful_browser = None
+_refresh_fail_count = 0
+_REDIRECT_THRESHOLD = 2
+_refresh_lock = None
+
 # --- Vertex AI Client ---
 class AuthError(Exception):
     """Raised when authentication fails (e.g. Recaptcha invalid)."""
@@ -257,8 +266,11 @@ class VertexAIClient:
                     should_refresh = True
                 
                 if should_refresh:
-                    # Trigger refresh
-                    await request_token_refresh()
+                    # 根据模式选择刷新策略
+                    if BROWSER_MODE == "headful":
+                        await headful_browser_refresh()
+                    else:
+                        await request_token_refresh()
                     
                     # Wait for credentials (with a timeout)
                     print("⏳ Waiting for fresh credentials...")
@@ -555,10 +567,13 @@ class VertexAIClient:
                         
                         # Check for potential token expiration
                         if response.status_code in [400, 401, 403] and attempt < max_retries:
-                            print(f"⚠️ Auth Error ({response.status_code}). Triggering UI refresh and waiting...")
+                            print(f"⚠️ Auth Error ({response.status_code}). Triggering refresh and waiting...")
                             
-                            # Trigger UI Refresh
-                            await request_token_refresh()
+                            # 根据模式选择刷新策略
+                            if BROWSER_MODE == "headful":
+                                await headful_browser_refresh()
+                            else:
+                                await request_token_refresh()
                             
                             # Wait for new credentials
                             refreshed = await cred_manager.wait_for_refresh(timeout=45)
@@ -652,7 +667,10 @@ class VertexAIClient:
                 print(f"⚠️ Auth Error caught in stream: {e}")
                 if attempt < max_retries:
                     print("🔄 Triggering refresh and retrying...")
-                    await request_token_refresh()
+                    if BROWSER_MODE == "headful":
+                        await headful_browser_refresh()
+                    else:
+                        await request_token_refresh()
                     # Step 1: Wait for the new credentials to be harvested
                     refreshed = await cred_manager.wait_for_refresh(timeout=60)
                     if refreshed:
@@ -951,20 +969,205 @@ async def request_token_refresh():
             print(f"Failed to send refresh request: {e}")
             harvester_clients.remove(ws)
 
-async def main():
-    # Start WebSocket Server
-    ws_server = websockets.serve(websocket_handler, "0.0.0.0", PORT_WS)
+async def headful_browser_refresh() -> None:
+    """有头浏览器模式凭证刷新"""
+    global _headful_browser, _refresh_fail_count, _refresh_lock
     
-    # Start API Server
+    # 延迟初始化锁（在异步上下文中）
+    if _refresh_lock is None:
+        _refresh_lock = asyncio.Lock()
+    
+    # 获取刷新锁，防止并发刷新
+    if _refresh_lock.locked():
+        print("⏳ 检测到正在进行的凭证刷新，等待完成...")
+        async with _refresh_lock:
+            print("✅ 凭证刷新已由其他请求完成")
+            return
+    
+    async with _refresh_lock:
+        if _headful_browser and _headful_browser.is_running:
+            print("🔄 有头浏览器模式: 按需刷新凭证...")
+        
+            try:
+                # 记录刷新前的凭证时间戳
+                old_timestamp = cred_manager.last_updated
+                print(f"   🔍 刷新前凭证时间戳: {old_timestamp}")
+                
+                # 先尝试关闭任何可能的 overlay
+                await _headful_browser._dismiss_overlays()
+                
+                success = await _headful_browser.send_test_message()
+                if success:
+                    # 等待凭证实际更新（最多等待 5 秒）
+                    for i in range(10):
+                        await asyncio.sleep(0.5)
+                        if cred_manager.last_updated > old_timestamp:
+                            new_timestamp = cred_manager.last_updated
+                            print(f"✅ 有头浏览器模式: 凭证已更新")
+                            print(f"   新凭证时间戳: {new_timestamp} (延迟 {new_timestamp - old_timestamp:.1f}秒)")
+                            _refresh_fail_count = 0
+                            
+                            # 立即设置事件
+                            cred_manager.refresh_event.set()
+                            cred_manager.refresh_complete_event.set()
+                            return  # 成功，直接返回
+                    
+                    print("⚠️ 有头浏览器模式: 消息已发送但凭证未更新 (可能被 recaptcha 拦截)")
+                
+                # 失败处理
+                _refresh_fail_count += 1
+                print(f"❌ 有头浏览器模式: 凭证刷新失败 (连续失败 {_refresh_fail_count}/{_REDIRECT_THRESHOLD})")
+                
+                # 连续失败达到阈值，尝试恢复
+                if _refresh_fail_count >= _REDIRECT_THRESHOLD:
+                    print("🔄 有头浏览器模式: 重复失败，尝试恢复...")
+                    _refresh_fail_count = 0
+                    
+                    recovered = False
+                    
+                    # 策略1: 刷新当前页面
+                    try:
+                        print("   📍 策略1: 刷新当前页面...")
+                        if _headful_browser.page:
+                            await _headful_browser._dismiss_overlays()
+                            await _headful_browser.page.reload(wait_until="domcontentloaded", timeout=15000)
+                            await asyncio.sleep(2)
+                            await _headful_browser._dismiss_overlays()
+                            
+                            retry_success = await _headful_browser.send_test_message()
+                            if retry_success:
+                                print("   ✅ 页面刷新后恢复成功")
+                                recovered = True
+                    except Exception as e:
+                        print(f"   ⚠️ 页面刷新失败: {str(e)[:50]}")
+                    
+                    # 策略2: 重定向到 Vertex AI Studio
+                    if not recovered:
+                        try:
+                            print("   📍 策略2: 重定向到 Vertex AI Studio...")
+                            if _headful_browser.page:
+                                await _headful_browser.page.goto(
+                                    _headful_browser.VERTEX_AI_URL,
+                                    wait_until="domcontentloaded",
+                                    timeout=30000
+                                )
+                                print("   ✅ 已重定向，等待页面加载...")
+                                await asyncio.sleep(3)
+                                
+                                await _headful_browser._dismiss_overlays()
+                                
+                                retry_success = await _headful_browser.send_test_message()
+                                if retry_success:
+                                    print("   ✅ 重定向后恢复成功")
+                                    recovered = True
+                                else:
+                                    print("   ⚠️ 重定向后仍然失败")
+                        except Exception as e:
+                            print(f"   ⚠️ 重定向失败: {str(e)[:50]}")
+                    
+                    if not recovered:
+                        print("⚠️ 有头浏览器模式: 所有恢复策略失败")
+                        
+            except Exception as e:
+                print(f"❌ 有头浏览器模式: 凭证刷新异常: {e}")
+                _refresh_fail_count += 1
+        else:
+            print("⚠️ 有头浏览器模式: 浏览器未运行，无法刷新凭证")
+
+
+async def start_headful_browser_mode() -> None:
+    """启动有头浏览器模式"""
+    global _headful_browser
+    
+    try:
+        from src.browser import HeadfulBrowser
+        from src.harvester import CredentialHarvester
+    except ImportError as e:
+        print(f"❌ 无法导入浏览器模块: {e}")
+        print("   请确保已安装 playwright: pip install playwright && playwright install chromium")
+        return
+    
+    print("🌐 有头浏览器模式启动中...")
+    
+    # 创建浏览器实例
+    browser = HeadfulBrowser()
+    _headful_browser = browser
+    
+    def on_credentials(data):
+        cred_manager.update(data)
+        cred_manager.refresh_complete_event.set()
+    
+    harvester = CredentialHarvester(on_credentials=on_credentials)
+    
+    # 启动浏览器（有头模式）
+    if not await browser.start(headless=False):
+        print("❌ 有头浏览器启动失败")
+        _headful_browser = None
+        return
+    
+    # 设置请求拦截
+    await browser.setup_request_interception(harvester.handle_request)
+    
+    # 导航到 Vertex AI
+    if not await browser.navigate_to_vertex():
+        print("❌ 无法访问 Vertex AI Studio")
+        await browser.close()
+        _headful_browser = None
+        return
+    
+    print("🔄 有头浏览器模式: 获取初始凭证...")
+    await browser.send_test_message()
+    
+    print("✅ 有头浏览器模式已就绪 (按需刷新)")
+    print("   👁️ 浏览器窗口已打开，您可以看到浏览器操作")
+    
+    # 保持浏览器运行
+    try:
+        while browser.is_running:
+            await asyncio.sleep(1)
+    finally:
+        await browser.close()
+        _headful_browser = None
+
+
+async def main():
+    """启动服务器"""
+    print(f"\n📋 浏览器模式: {BROWSER_MODE}")
+    
+    tasks = []
+    
+    # 根据模式启动相应的服务
+    if BROWSER_MODE == "websocket":
+        # WebSocket 模式（原有模式）
+        print("🌐 WebSocket 模式: 等待浏览器脚本连接...")
+        ws_server = websockets.serve(websocket_handler, "0.0.0.0", PORT_WS)
+        tasks.append(ws_server)
+        
+    elif BROWSER_MODE == "headful":
+        # 有头浏览器模式
+        print("🌐 有头浏览器模式: 自动获取凭证...")
+        tasks.append(asyncio.create_task(start_headful_browser_mode()))
+        
+    elif BROWSER_MODE == "manual":
+        # 手动模式（使用已保存的凭证）
+        print("📄 手动模式: 使用已保存的凭证")
+        if not cred_manager.get_credentials():
+            print("⚠️ 未找到凭证文件，请先运行其他模式获取凭证")
+    
+    # 启动 API 服务器
     config = uvicorn.Config(app, host="0.0.0.0", port=PORT_API, log_level="info")
     server = uvicorn.Server(config)
 
-    print(f"\n🚀 Headful Proxy Started")
-    print(f"   - API: http://0.0.0.0:{PORT_API} (Accessible via LAN IP)")
-    print(f"   - WS:  ws://0.0.0.0:{PORT_WS}")
-    print("   👉 Please ensure the 'Harvester' userscript is running in your browser.")
+    print(f"\n🚀 Proxy 服务已启动")
+    print(f"   - API: http://0.0.0.0:{PORT_API}")
+    if BROWSER_MODE == "websocket":
+        print(f"   - WS:  ws://0.0.0.0:{PORT_WS}")
+        print("   👉 请确保浏览器中的 Harvester 脚本正在运行")
+    elif BROWSER_MODE == "headful":
+        print("   👁️ 浏览器窗口将自动打开")
 
-    await asyncio.gather(ws_server, server.serve())
+    tasks.append(server.serve())
+    await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
     import os
