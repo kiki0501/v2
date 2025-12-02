@@ -75,29 +75,29 @@ class CredentialHarvester:
             cookies = all_headers.get("cookie", "")
             
             # 提取请求体
-            body = None
-            post_data_str = ""
+            body_str = ""
             try:
                 post_data = request.post_data
                 if post_data:
-                    post_data_str = post_data
-                    body = json.loads(post_data)
+                    body_str = post_data
+                    # 验证是否为有效的 JSON
+                    json.loads(body_str)
             except:
                 pass
             
             # 过滤：只捕获实际的生成内容请求
             CONTENT_KEYWORDS = ['StreamGenerateContent', 'generateContent', 'Predict', 'Image']
-            is_content_request = any(kw in post_data_str for kw in CONTENT_KEYWORDS)
+            is_content_request = any(kw in body_str for kw in CONTENT_KEYWORDS)
             
             if not is_content_request:
                 return
             
-            # 创建凭证对象
+            # 创建凭证对象 - 注意 body 必须是字符串格式，与 main.py 中的 json.loads(creds['body']) 匹配
             credentials = {
                 "headers": headers,
                 "cookies": cookies,
                 "url": url,
-                "body": body,
+                "body": body_str,  # 保持字符串格式
                 "timestamp": time.time()
             }
             

@@ -106,8 +106,14 @@ class CredentialManager:
         try:
             with open(self.filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                self.latest_harvest = data.get('harvest')
-                self.last_updated = data.get('timestamp', 0)
+                # 兼容两种格式：旧格式 {'harvest': {...}} 和新格式 {...}
+                if 'harvest' in data:
+                    self.latest_harvest = data.get('harvest')
+                    self.last_updated = data.get('timestamp', 0)
+                else:
+                    # 新格式直接存储凭证
+                    self.latest_harvest = data
+                    self.last_updated = data.get('timestamp', time.time())
                 print(f"📂 Loaded credentials from disk (Age: {int(time.time() - self.last_updated)}s)")
         except FileNotFoundError:
             print("📂 No saved credentials found.")
@@ -117,17 +123,36 @@ class CredentialManager:
     def save_to_disk(self):
         try:
             with open(self.filepath, 'w', encoding='utf-8') as f:
-                json.dump({
-                    'harvest': self.latest_harvest,
-                    'timestamp': self.last_updated
-                }, f, indent=2)
+                # 直接保存凭证，不嵌套在 'harvest' 键下
+                json.dump(self.latest_harvest, f, indent=2)
             print(f"💾 Credentials saved to {self.filepath}")
         except Exception as e:
             print(f"⚠️ Error saving credentials: {e}")
 
     def update(self, data: Dict[str, Any]):
+        """
+        更新凭证
+        
+        Args:
+            data: 凭证数据，格式：
+                {
+                    "headers": {...},
+                    "cookies": "...",
+                    "url": "...",
+                    "body": "...",  # 必须是字符串格式
+                    "timestamp": 123456
+                }
+        """
+        # 确保 body 是字符串格式
+        if 'body' in data and not isinstance(data['body'], str):
+            print(f"⚠️ Warning: body is not a string, converting...")
+            data['body'] = json.dumps(data['body'])
+        
         self.latest_harvest = data
         self.last_updated = time.time()
+        # 更新时间戳
+        self.latest_harvest['timestamp'] = self.last_updated
+        
         print(f"🔄 Credentials updated at {time.strftime('%H:%M:%S')}")
         self.save_to_disk()
         self.refresh_event.set() # Unblock credential waiting requests

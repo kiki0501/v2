@@ -17,9 +17,11 @@ services:
     environment:
       - NOGUI=1
       - PYTHONUNBUFFERED=1
-      - API_KEY=your-secret-api-key-here  # 请修改为您自己的密钥
-      - BROWSER_MODE=headful  # 有头浏览器模式
+      - API_KEY=${API_KEY:-your-secret-api-key-here}  # 从 .env 文件读取
+      - BROWSER_MODE=${BROWSER_MODE:-headful}  # 有头浏览器模式
       - DISPLAY=${DISPLAY:-:99}  # X11 显示
+    env_file:
+      - .env  # 从 .env 文件加载环境变量
     # 如果需要在 Docker 中运行 GUI 应用，需要特权模式或设备访问
     devices:
       - /dev/dri:/dev/dri  # GPU 加速（如果可用）

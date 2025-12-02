@@ -45,19 +45,40 @@ docker-compose -f docker-compose.headful.yml up
 
 ## 📦 快速开始
 
+### 配置环境变量
+
+**首先创建 `.env` 文件**（必需步骤）：
+
+```bash
+# 复制示例文件
+cp .env.example .env
+
+# 编辑 .env 文件，设置你的 API Key
+# API_KEY=your-secret-api-key-here  # 修改这里！
+```
+
+或者直接创建 `.env` 文件：
+```bash
+echo "API_KEY=your-custom-api-key" > .env
+echo "BROWSER_MODE=headful" >> .env
+```
+
 ### 方式 1: Docker WebSocket 模式（推荐）
 
 ```bash
-# 1. 启动服务
+# 1. 配置环境变量（见上方）
+# 确保 .env 文件已创建并设置了 API_KEY
+
+# 2. 启动服务
 docker-compose up -d
 
-# 2. 在浏览器中安装油猴脚本
+# 3. 在浏览器中安装油猴脚本
 # 访问 http://localhost:7860 获取脚本
 
-# 3. 打开 Vertex AI Studio
+# 4. 打开 Vertex AI Studio
 # https://console.cloud.google.com/vertex-ai/generative/multimodal/create/text
 
-# 4. 脚本会自动连接并发送凭证
+# 5. 脚本会自动连接并发送凭证
 ```
 
 ### 方式 2: 有头浏览器模式
@@ -88,15 +109,42 @@ playwright install chromium
 BROWSER_MODE=headful python main.py
 ```
 
-## 🔧 环境变量
+## 🔧 环境变量配置
 
-| 变量 | 说明 | 默认值 | 可选值 |
-|------|------|--------|--------|
-| `BROWSER_MODE` | 凭证获取模式 | `manual` | `manual`, `websocket`, `headful` |
-| `API_KEY` | API 认证密钥 | `your-secret-api-key-here` | 任意字符串 |
-| `NOGUI` | 禁用 GUI | `1` | `0`, `1` |
-| `PORT_API` | API 端口 | `7860` | 任意端口 |
-| `PORT_WS` | WebSocket 端口 | `28881` | 任意端口 |
+### 配置方式
+
+有两种方式配置环境变量：
+
+#### 1. 使用 .env 文件（推荐）
+
+```bash
+# 创建 .env 文件
+cp .env.example .env
+
+# 编辑 .env 文件
+API_KEY=your-custom-api-key-here
+BROWSER_MODE=headful
+```
+
+#### 2. 直接修改 docker-compose.yml
+
+编辑 `docker-compose.yml` 或 `docker-compose.headful.yml` 中的 `environment` 部分。
+
+### 环境变量列表
+
+| 变量 | 说明 | 默认值 | 可选值 | 是否必需 |
+|------|------|--------|--------|----------|
+| `API_KEY` | API 认证密钥（用于调用此反代服务） | `your-secret-api-key-here` | 任意字符串 | ⭐ **必需** |
+| `BROWSER_MODE` | 凭证获取模式 | `manual` | `manual`, `websocket`, `headful` | 可选 |
+| `NOGUI` | 禁用 GUI | `1` | `0`, `1` | 可选 |
+| `PORT_API` | API 端口 | `7860` | 任意端口 | 可选 |
+| `PORT_WS` | WebSocket 端口 | `28881` | 任意端口 | 可选 |
+
+### ⚠️ 重要提示
+
+- **API_KEY** 是用于访问此反代服务的密钥，不是 Google 的 API Key
+- 建议使用强密码作为 API_KEY（长度 ≥ 16 字符）
+- 不要将 API_KEY 提交到版本控制系统（.env 文件已在 .gitignore 中）
 
 ## 📡 API 使用
 
@@ -159,7 +207,7 @@ model="imagen-3.0-generate-001-4k"  # 4K 分辨率
 
 访问 `http://localhost:7860/dashboard` 查看使用统计。
 
-需要使用 API Key 进行认证（在 Header 中添加 `X-API-Key`）。
+登录时需要输入你在 `.env` 文件中设置的 `API_KEY`。
 
 ## 🔄 模式对比
 
