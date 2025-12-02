@@ -43,6 +43,10 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN playwright install chromium
 RUN playwright install-deps chromium
 
+# 复制启动脚本
+COPY docker-entrypoint.sh ./
+RUN chmod +x docker-entrypoint.sh
+
 # 复制应用文件
 COPY main.py gui.py models.json stats_manager.py ./
 COPY static/ ./static/
@@ -60,5 +64,5 @@ ENV NOGUI=1
 ENV PYTHONUNBUFFERED=1
 ENV BROWSER_MODE=headful
 
-# 启动命令
-CMD ["python", "main.py"]
+# 启动命令（使用启动脚本）
+ENTRYPOINT ["./docker-entrypoint.sh"]
