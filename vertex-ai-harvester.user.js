@@ -298,6 +298,50 @@
         logToScreen('⚠️ Page ready timeout, proceeding anyway...');
     }
 
+    // 关闭页面上的 overlay 遮罩层
+    async function dismissOverlays() {
+        try {
+            // 1. 点击所有 backdrop 关闭对话框
+            const backdrops = document.querySelectorAll('.cdk-overlay-backdrop');
+            backdrops.forEach(backdrop => {
+                if (backdrop.offsetParent !== null) {
+                    backdrop.click();
+                }
+            });
+            
+            // 2. 按 Escape 键关闭任何模态
+            document.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'Escape',
+                code: 'Escape',
+                keyCode: 27,
+                which: 27,
+                bubbles: true
+            }));
+            
+            // 3. 移除阻挡的 overlay 容器内容（最后手段）
+            const overlayContainer = document.querySelector('.cdk-overlay-container');
+            if (overlayContainer) {
+                // 检查是否有活跃的 backdrop
+                const activeBackdrop = overlayContainer.querySelector('.cdk-overlay-backdrop-showing');
+                if (activeBackdrop) {
+                    // 尝试找到并点击关闭按钮
+                    const closeButtons = overlayContainer.querySelectorAll(
+                        'button[aria-label*="close"], button[aria-label*="Close"], ' +
+                        'button[aria-label*="关闭"], .mat-dialog-close, ' +
+                        'button.close, [mat-dialog-close]'
+                    );
+                    closeButtons.forEach(btn => btn.click());
+                }
+            }
+            
+            // 等待 overlay 动画完成
+            await new Promise(r => setTimeout(r, 300));
+            
+        } catch (e) {
+            logToScreen(`⚠️ 关闭 overlay 时出错: ${e}`);
+        }
+    }
+
     async function sendDummyMessage() {
         const MAX_RETRIES = 5;
         let attempts = 0;
@@ -305,6 +349,9 @@
         while (attempts < MAX_RETRIES) {
             attempts++;
             try {
+                // 先关闭任何可能存在的 overlay 遮罩层
+                await dismissOverlays();
+                
                 // 智能查找编辑器 - 多种选择器策略
                 const editor = await findEditor();
                 
@@ -340,7 +387,15 @@
                 logToScreen(`⚠️ Send failed on attempt ${attempts}. Retrying...`);
                 
             } catch (e) {
-                logToScreen(`❌ Error in send attempt: ${e}`);
+                // 检查是否是 overlay 遮挡错误
+                if (e.toString().includes('intercepts pointer events') ||
+                    e.toString().includes('not clickable')) {
+                    logToScreen(`⚠️ 检测到 overlay 遮挡，尝试关闭...`);
+                    await dismissOverlays();
+                    await new Promise(r => setTimeout(r, 500));
+                } else {
+                    logToScreen(`❌ Error in send attempt: ${e}`);
+                }
             }
             
             await new Promise(r => setTimeout(r, 1000));
@@ -351,9 +406,11 @@
     // 智能查找编辑器元素
     async function findEditor() {
         const selectors = [
+            'textarea[aria-label*="message"]',
             'div[contenteditable="true"]',
             'textarea[placeholder*="message" i]',
             'textarea[placeholder*="prompt" i]',
+            'textarea[placeholder*="消息"]',
             'div[role="textbox"]',
             'div.input-field[contenteditable="true"]',
             '[data-placeholder][contenteditable="true"]'
@@ -415,6 +472,10 @@
 
     // 尝试发送消息 - 多种策略
     async function trySendMessage(editor) {
+        // 策略 0: 使用 JavaScript 直接操作（绕过 overlay）
+        const jsSent = await tryJavaScriptSend(editor);
+        if (jsSent) return true;
+        
         // 策略 1: Enter 键
         const enterSent = await tryEnterKey(editor);
         if (enterSent) return true;
@@ -428,6 +489,79 @@
         if (buttonSent) return true;
         
         return false;
+    }
+
+    // 尝试使用 JavaScript 直接发送（绕过 overlay 问题）
+    async function tryJavaScriptSend(editor) {
+        logToScreen('   → Trying JavaScript direct send...');
+        try {
+            // 使用 JavaScript 直接聚焦和输入
+            const success = (() => {
+                // 关闭所有 overlay
+                const overlays = document.querySelectorAll('.cdk-overlay-backdrop, .cdk-overlay-container > *');
+                overlays.forEach(el => {
+                    if (el.classList.contains('cdk-overlay-backdrop')) {
+                        el.click();  // 点击背景关闭
+                    }
+                });
+                
+                // 查找输入框
+                const selectors = [
+                    'textarea[aria-label*="message"]',
+                    'div[contenteditable="true"]',
+                    'textarea[placeholder*="message"]',
+                    'textarea[placeholder*="消息"]'
+                ];
+                
+                let input = null;
+                for (const sel of selectors) {
+                    input = document.querySelector(sel);
+                    if (input && input.offsetParent !== null) break;
+                    input = null;
+                }
+                
+                if (!input) return false;
+                
+                // 聚焦输入框
+                input.focus();
+                
+                // 设置内容
+                if (input.tagName === 'TEXTAREA') {
+                    input.value = 'Hello';
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                } else {
+                    // contenteditable
+                    input.textContent = 'Hello';
+                    input.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Hello' }));
+                }
+                
+                return true;
+            })();
+            
+            if (!success) {
+                return false;
+            }
+            
+            await new Promise(r => setTimeout(r, 100));
+            
+            // 按回车发送
+            const enterEvent = new KeyboardEvent('keydown', {
+                key: 'Enter',
+                code: 'Enter',
+                keyCode: 13,
+                which: 13,
+                bubbles: true,
+                cancelable: true
+            });
+            editor.dispatchEvent(enterEvent);
+            
+            await new Promise(r => setTimeout(r, 1000));
+            return isEditorCleared(editor);
+            
+        } catch (e) {
+            logToScreen(`   ⚠️ JavaScript send failed: ${e}`);
+            return false;
+        }
     }
 
     // 尝试 Enter 键发送
