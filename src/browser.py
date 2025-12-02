@@ -132,7 +132,9 @@ class HeadfulBrowser:
     
     async def _check_and_accept_terms(self) -> bool:
         """
-        检测并同意 Google Cloud 服务条款
+        检测并同意 Google Cloud 服务条款 - 优化版本（基于 vvv）
+        
+        使用多种选择器策略，提高兼容性和成功率
         
         Returns:
             是否检测到并处理了条款对话框
@@ -141,61 +143,147 @@ class HeadfulBrowser:
             return False
         
         try:
-            # 检测条款对话框的多个可能选择器
-            terms_selectors = [
-                # 条款对话框标题
+            # 1. 条款检测选择器（优先级排序）
+            TERMS_SELECTORS = [
+                'p.notranslate',
+                '[role="dialog"] p',
+                '.mdc-dialog__content p',
+                '[aria-modal="true"] p',
                 'text=/terms.*conditions/i',
                 'text=/service.*terms/i',
-                'text=/updated.*terms/i',
-                # 条款对话框容器
-                '[role="dialog"]:has-text("terms")',
-                '[role="dialog"]:has-text("Terms")',
-                # 特定的 Google Cloud 条款
-                'text=/cloud.*terms/i',
             ]
             
-            terms_detected = False
-            for selector in terms_selectors:
+            # 2. 查找条款元素
+            terms_element = None
+            for selector in TERMS_SELECTORS:
                 try:
                     element = await self.page.query_selector(selector)
-                    if element and await element.is_visible():
-                        terms_detected = True
-                        print("📋 检测到服务条款对话框")
-                        break
+                    if element:
+                        is_visible = await element.is_visible()
+                        if is_visible:
+                            # 验证是否包含条款关键词
+                            text = await element.text_content()
+                            if text:
+                                text_lower = text.lower()
+                                if any(kw in text_lower for kw in ['terms', 'agree', '条款', '同意', 'consent', 'accept']):
+                                    terms_element = element
+                                    break
                 except:
                     continue
             
-            if not terms_detected:
+            if not terms_element:
                 return False
             
-            # 查找并点击同意按钮
-            accept_selectors = [
-                'button:has-text("Accept")',
-                'button:has-text("Agree")',
-                'button:has-text("I agree")',
-                'button:has-text("I accept")',
+            print("📜 检测到服务条款对话框，正在自动同意...")
+            
+            # 3. 智能滚动条款内容到底部
+            await self.page.evaluate('''() => {
+                // 查找所有可能的滚动容器
+                const scrollableSelectors = [
+                    '.mdc-dialog__content',
+                    '[role="dialog"] [style*="overflow"]',
+                    '.terms-content',
+                    '.consent-content'
+                ];
+                
+                for (const selector of scrollableSelectors) {
+                    const containers = document.querySelectorAll(selector);
+                    for (const container of containers) {
+                        const style = window.getComputedStyle(container);
+                        if (style.overflow === 'auto' || style.overflow === 'scroll' ||
+                            style.overflowY === 'auto' || style.overflowY === 'scroll') {
+                            // 平滑滚动到底部
+                            container.scrollTo({
+                                top: container.scrollHeight,
+                                behavior: 'smooth'
+                            });
+                        }
+                    }
+                }
+                
+                // 备选：查找条款文本并滚动
+                const termsText = document.querySelector('p.notranslate');
+                if (termsText) {
+                    termsText.scrollIntoView({ block: 'end', behavior: 'smooth' });
+                }
+            }''')
+            
+            # 最小等待滚动完成
+            await asyncio.sleep(0.1)
+            print("   ✓ 已滚动到条款底部")
+            
+            # 4. 尝试勾选同意复选框（如果存在）
+            CHECKBOX_SELECTORS = [
+                'input.mdc-checkbox__native-control[type="checkbox"]',
+                '[role="dialog"] input[type="checkbox"]',
+                '.mdc-checkbox input[type="checkbox"]',
+                'input[type="checkbox"][aria-label*="agree"]',
+                'input[type="checkbox"][aria-label*="同意"]'
+            ]
+            
+            checkbox = None
+            for selector in CHECKBOX_SELECTORS:
+                try:
+                    checkbox = await self.page.query_selector(selector)
+                    if checkbox:
+                        is_visible = await checkbox.is_visible()
+                        if is_visible:
+                            break
+                        checkbox = None
+                except:
+                    continue
+            
+            if checkbox:
+                try:
+                    is_checked = await checkbox.is_checked()
+                    if not is_checked:
+                        await checkbox.click()
+                        await asyncio.sleep(0.05)
+                    print("   ✓ 已勾选同意复选框")
+                except:
+                    print("   ℹ️ 复选框处理失败（可能不需要）")
+            
+            # 5. 点击同意按钮（快速版本）
+            BUTTON_SELECTORS = [
+                'span.mdc-button__label:has-text("同意")',
+                'span.mdc-button__label:has-text("Agree")',
+                'span.mdc-button__label:has-text("Accept")',
                 'button:has-text("同意")',
-                'button:has-text("接受")',
+                'button:has-text("Agree")',
+                'button:has-text("Accept")',
+                'button:has-text("I agree")',
+                '[role="dialog"] button[type="submit"]',
+                '.mdc-dialog__actions button:last-child',
                 'button[aria-label*="accept"]',
                 'button[aria-label*="agree"]',
             ]
             
-            for selector in accept_selectors:
+            agree_button = None
+            for selector in BUTTON_SELECTORS:
                 try:
-                    button = await self.page.query_selector(selector)
-                    if button and await button.is_visible():
-                        await button.click()
-                        print("✅ 已同意服务条款")
-                        await asyncio.sleep(1)
-                        return True
+                    agree_button = await self.page.query_selector(selector)
+                    if agree_button:
+                        is_visible = await agree_button.is_visible()
+                        is_enabled = await agree_button.is_enabled()
+                        if is_visible and is_enabled:
+                            break
+                        agree_button = None
                 except:
                     continue
             
-            # 如果没有找到按钮，尝试按 Enter 键
-            print("⚠️ 未找到同意按钮，尝试按 Enter...")
-            await self.page.keyboard.press("Enter")
-            await asyncio.sleep(1)
-            return True
+            if agree_button:
+                # 直接点击，最小化延迟
+                await agree_button.click()
+                await asyncio.sleep(0.2)
+                print("   ✓ 已点击同意按钮")
+                print("✅ 条款已自动同意")
+                return True
+            else:
+                # 备选：尝试按 Enter 键
+                print("   ⚠️ 未找到同意按钮，尝试按 Enter...")
+                await self.page.keyboard.press("Enter")
+                await asyncio.sleep(0.2)
+                return True
             
         except Exception as e:
             print(f"   ⚠️ 处理条款对话框时出错: {e}")
