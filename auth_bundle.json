@@ -1,0 +1,66 @@
+{
+  "headers": {
+    "Authorization": "SAPISIDHASH 1763896639_adb82ccf12ea211cd17482c7834c26ffbb4601bd SAPISID1PHASH 1763896639_adb82ccf12ea211cd17482c7834c26ffbb4601bd SAPISID3PHASH 1763896639_adb82ccf12ea211cd17482c7834c26ffbb4601bd",
+    "X-Goog-AuthUser": "0",
+    "X-Server-Token": "CAMSHBUfl6vEN7CGW-rVnwb6gvsD1NEEq_QFkvIOHQc=",
+    "x-goog-ext-353267353-jspb": "[null,null,null,254831]",
+    "X-Goog-First-Party-Reauth": "[\"IXZMLWx2LWZOQUFaYkdNeGdleGhDR0N1QWlhUGdzcDg3QURRQkVBcloxUGJRc0Z4b3lWdXpWTVB2SnRlMVZZeVJVUFM0LXlHVHZCYkNrZkRPV1h5VXA3QWZLUHktbW5sX2hZLWlOUXlKQWdBQUFCZFNBQUFBQW1nQkIzNEFRUHkzeU9qWkRjRm1KemdELWpqeU5PdFBQZjRjcm45aFFrb3NhRk9TM1hUYk5WWGwxVnRrb3c1UE1mVzk5enZ2aHN5VC15NmJiSTVac0J0cFZMLW1fN0taQXgwbnVFQlRkdThpbDhkdDhFV1pFRVlDbkZzTnhzWXFYX3JhNy1Qc2lOajVBQ2JsNzFKaWZEdlNBNTY3NzN3TWQ4NlI0aFhKYko5c29xN09tUFZCYjV6WXBLa2RIWmFSRG41MVE0SGlNTUNWUjBJR0hRQ3JTT0FpVjlCNnhHQzlneFRqNFZ4LTg4ekYyaGVwNExGdjJUdjRFNUNVaTQ4MEZya3VIbWltTHZaRXJwVUxsVGJxaUFhNGVEeFlhelJ1SElubjNScDVzbkR6MHBjczVJbGpLVzI4aVJNQ2o2c2tjOWdKTGdodk43V1ZNS25zcnlXd3otcWNOQ01GVExEX0k1dVZPSGR2WlMyWnJ5bFFtOGhkcGNvSlBMSE1wQVc5aUFSUTE4SzlPZVNqSnVXSUpvR1gzMEJOcVVfR3NyZWF0QlRUUjhEeklrZ2FYTFhQeWpwU1prdXVEVmFvRVloOHdJdklxWl9Yb3l5R19waExvb1cxRzFoejRKZ0MyZFZhM1BJdUE1Nkk0U0FXYVRTUWpuemFaX2xGdGZ4T29yaEVGcFE0NmpBdzFMcEVxV3FFcml3eF9xclRWcjA5NnF1RGxwbV9CVS1ScGNkaEEydXNUWm8xSkVjTGpvQUFsSHhNNFF3OEh5UWFSbng0X0tfTFgtUjQwQUMzbTlUTVRhQ2h5WWlfUjR1bDhBTTlES0xVSWhFRjg2aTNoaUNJelhPRS1VbmNQUFltVFBiQk9VZVFxMXU5LU1jdnQzR0V0ZUVGa1Z4d2xWOTZ4bk5lNmxRZ1RQbzZtOE5sbWs3dUF4QXJ6MFFRSlNyb25zcFVTaHBGd2JyeGhxdXpVTi0wWHRHOFEybHBzeW5DY2RJMmx0Qkx1N05ZdVVscTlwNzVjTW45ZXNSaW94V2JsMzE5ZWJRdnd3emJnWDBjSlllY0cza3lQbHpObDZPOV8zWXcxXzliS3VYeFk5MHhSYTlPM1Ayelp1ckF5MVRDSk9DMTFPOU1hdkhpaHBTMm1MZGtfU2NyRTVWSUs2b2xTbE8tWGtyWlNkYk9hNmxoMC1HWlpidzRYd0pvbmxYM2ZBZTBPVEQ0cUlPLUxuS1VqeVQwT0ZFTFF3aWFNWlJZVDhOVWJxamVVRXBPOTliQUFSbkZnSUZyYjJwR1ZBVWxTRGtRUVdXVkFCaVVoMjR6NXQybG5tWU5pbHJBcFFCcGE5YW1kc1ppUUJnRUl1YTBXem1vLXhuZVVPSW1mcDRqZjVaeGdBWG9pMTJRM1NGYmo4akd4LTh6STlhVFhkZkdCZnhKcDEtc1IxR2FEdHJ6a1RDbXNZX1ZSN0c1cXJQR0JqRDBkekhrUUY5TnctLVJkUWozcE1EcFByUkFXTVk1TGNKVXVqMS1wREo1VGRzQTU2eWViWklJcFh6SlUxenJTdw==\"]"
+  },
+  "cookies": [
+    {
+      "name": "_ga",
+      "value": "GA1.1.1395590684.1750176025",
+      "domain": ".google.com"
+    },
+    {
+      "name": "_ga_WH2QY8WWF5",
+      "value": "GS2.1.s1751069328$o3$g1$t1751071115$j16$l0$h0",
+      "domain": ".google.com"
+    },
+    {
+      "name": "SEARCH_SAMESITE",
+      "value": "CgQIvZ8B",
+      "domain": ".google.com"
+    },
+    {
+      "name": "SID",
+      "value": "g.a0003whpLYktB4eQj52QEWY6upQyC1HGS9UkEx5vxur9Ynn-GYxckvSj7eGyjzjrZAK-Y2k-4gACgYKATMSARESFQHGX2MiufiPc23aPgCzi5u8eTefixoVAUF8yKris0iWF9wAIcb0m7gSEXQa0076",
+      "domain": ".google.com"
+    },
+    {
+      "name": "APISID",
+      "value": "oZw2FhJDuSiFpGlj/AxQKGToQo-dBrkKPt",
+      "domain": ".google.com"
+    },
+    {
+      "name": "SAPISID",
+      "value": "6SZoogeV07LrikE5/AYNF6TviGO4fdXgvF",
+      "domain": ".google.com"
+    },
+    {
+      "name": "__Secure-1PAPISID",
+      "value": "6SZoogeV07LrikE5/AYNF6TviGO4fdXgvF",
+      "domain": ".google.com"
+    },
+    {
+      "name": "__Secure-3PAPISID",
+      "value": "6SZoogeV07LrikE5/AYNF6TviGO4fdXgvF",
+      "domain": ".google.com"
+    },
+    {
+      "name": "__utmz",
+      "value": "utmcsr=duckduckgo.com|utmcmd=referral|utmccn=(referral)|utmcct=/",
+      "domain": ".google.com"
+    },
+    {
+      "name": "_gcl_au",
+      "value": "1.3.1780274152.1763889985",
+      "domain": ".google.com"
+    },
+    {
+      "name": "SIDCC",
+      "value": "AKEyXzW-yZofq_7OqZE3xBqrI4s0lzPl3dNgEnfcYnexX5UQRVnr_5WVC99yKuGk2oYqKBuh7aA",
+      "domain": ".google.com"
+    }
+  ]
+}
