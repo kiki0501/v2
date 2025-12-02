@@ -437,14 +437,14 @@
 
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const apiKey = document.getElementById('apiKey').value;
+            const apiKey = document.getElementById('apiKey').value.trim();
             
             try {
                 const response = await fetch(`${API_BASE}/dashboard/verify`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-API-Key': apiKey
+                        'Authorization': `Bearer ${apiKey}`
                     }
                 });
 
@@ -476,7 +476,7 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-API-Key': currentApiKey
+                        'Authorization': `Bearer ${currentApiKey}`
                     }
                 });
 
@@ -508,7 +508,7 @@
             try {
                 const response = await fetch(`${API_BASE}/dashboard/stats`, {
                     headers: {
-                        'X-API-Key': currentApiKey
+                        'Authorization': `Bearer ${currentApiKey}`
                     }
                 });
 
@@ -524,7 +524,7 @@
                 updateStats(data);
             } catch (error) {
                 console.error('Error loading stats:', error);
-                document.getElementById('modelList').innerHTML = 
+                document.getElementById('modelList').innerHTML =
                     '<div class="empty-state">加载失败，请刷新重试</div>';
             }
         }

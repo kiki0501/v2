@@ -18,23 +18,54 @@ PORT_API = 7860
 PORT_WS = 28881
 MODELS_CONFIG_FILE = "models.json"
 STATS_FILE = "stats.json"
-API_KEY = os.environ.get("API_KEY", "your-secret-api-key-here")  # 从环境变量读取或使用默认值
-print(f"🔑 API_KEY loaded: {API_KEY[:20]}... (length: {len(API_KEY)})")
+API_KEY = os.environ.get("API_KEY", "your-secret-api-key-here").strip()  # 从环境变量读取并清理空格
+print(f"\n{'='*60}")
+print(f"🔑 API_KEY 配置信息:")
+print(f"   - 来源: {'环境变量' if 'API_KEY' in os.environ else '默认值'}")
+print(f"   - 完整值: {API_KEY}")
+print(f"   - 长度: {len(API_KEY)} 字符")
+print(f"   - 前20字符: {API_KEY[:20]}...")
+print(f"   - ASCII码(前10个): {[ord(c) for c in API_KEY[:10]]}")
+print(f"{'='*60}\n")
 
 # 浏览器模式配置
 BROWSER_MODE = os.environ.get("BROWSER_MODE", "manual")  # manual / headful / websocket
 
-# API Key 认证
+# API Key 认证 - 支持两种方式
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+security_bearer = HTTPBearer(auto_error=False)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-async def verify_api_key(api_key: str = Depends(api_key_header)):
-    """验证 API Key"""
-    if not api_key:
-        raise HTTPException(status_code=401, detail="API Key is required. Please provide X-API-Key header.")
-    if api_key != API_KEY:
-        print(f"⚠️ API Key mismatch - Expected: {API_KEY[:10]}..., Got: {api_key[:10] if api_key else 'None'}...")
+async def verify_api_key(
+    bearer: HTTPAuthorizationCredentials = Depends(security_bearer),
+    api_key: str = Depends(api_key_header)
+):
+    """验证 API Key - 支持 Authorization Bearer 和 X-API-Key 两种方式"""
+    # 优先使用 Bearer token
+    token = None
+    auth_method = None
+    
+    if bearer and bearer.credentials:
+        token = bearer.credentials.strip()
+        auth_method = "Bearer"
+    elif api_key:
+        token = api_key.strip()
+        auth_method = "X-API-Key"
+    
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="API Key is required. Please provide Authorization: Bearer <token> or X-API-Key header."
+        )
+    
+    if token != API_KEY:
+        print(f"⚠️ API Key 验证失败 (来源: {auth_method}):")
+        print(f"   期望: '{API_KEY[:20]}...' (长度: {len(API_KEY)})")
+        print(f"   收到: '{token[:20]}...' (长度: {len(token)})")
         raise HTTPException(status_code=401, detail="Invalid API Key")
-    return api_key
+    
+    print(f"✅ API Key 验证成功 (来源: {auth_method})")
+    return token
 
 # --- Token Stats Manager ---
 class TokenStatsManager:
@@ -834,10 +865,53 @@ async def dashboard():
     return FileResponse("static/dashboard.html")
 
 @app.post("/dashboard/verify")
-async def verify_dashboard_access(api_key: str = Depends(api_key_header)):
-    """验证仪表盘访问权限"""
-    if api_key != API_KEY:
+async def verify_dashboard_access(
+    bearer: HTTPAuthorizationCredentials = Depends(security_bearer),
+    api_key: str = Depends(api_key_header)
+):
+    """验证仪表盘访问权限 - 支持 Authorization Bearer 和 X-API-Key 两种方式"""
+    # 优先使用 Bearer token
+    token = None
+    auth_method = None
+    
+    if bearer and bearer.credentials:
+        token = bearer.credentials.strip()
+        auth_method = "Bearer"
+    elif api_key:
+        token = api_key.strip()
+        auth_method = "X-API-Key"
+    
+    print(f"\n{'='*60}")
+    print(f"🔍 Dashboard API Key 验证详情:")
+    print(f"   认证方式: {auth_method}")
+    print(f"   环境变量 API_KEY:")
+    print(f"     - 值: '{API_KEY}'")
+    print(f"     - 长度: {len(API_KEY)}")
+    print(f"     - 前10字符: '{API_KEY[:10]}'")
+    print(f"     - ASCII: {[ord(c) for c in API_KEY[:10]]}")
+    print(f"   ")
+    print(f"   接收到的 Token:")
+    print(f"     - 值: '{token}'")
+    print(f"     - 长度: {len(token) if token else 0}")
+    print(f"     - 前10字符: '{token[:10] if token else 'None'}'")
+    if token:
+        print(f"     - ASCII: {[ord(c) for c in token[:10]]}")
+    print(f"   ")
+    print(f"   比较结果: {token == API_KEY}")
+    print(f"{'='*60}\n")
+    
+    if not token:
+        print("❌ Dashboard验证失败: 未提供API Key")
+        raise HTTPException(
+            status_code=401,
+            detail="API Key is required. Please provide Authorization: Bearer <token> or X-API-Key header."
+        )
+    
+    if token != API_KEY:
+        print(f"❌ Dashboard验证失败: API Key不匹配")
         raise HTTPException(status_code=401, detail="Invalid API Key")
+    
+    print("✅ Dashboard验证成功")
     return {"status": "ok"}
 
 @app.get("/dashboard/stats")
