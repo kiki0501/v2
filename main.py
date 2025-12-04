@@ -604,11 +604,24 @@ class VertexAIClient:
                     
                     if response.status_code != 200:
                         error_text = await response.aread()
-                        print(f"❌ Google API Error: {response.status_code} - {error_text}")
+                        error_text_str = error_text.decode() if isinstance(error_text, bytes) else str(error_text)
+                        print(f"❌ Google API Error: {response.status_code} - {error_text_str}")
                         
-                        # Check for potential token expiration
-                        if response.status_code in [400, 401, 403] and attempt < max_retries:
-                            print(f"⚠️ Auth Error ({response.status_code}). Triggering refresh and waiting...")
+                        # 检测需要刷新凭证的错误模式
+                        should_refresh = False
+                        if response.status_code in [400, 401, 403]:
+                            should_refresh = True
+                        elif any(pattern in error_text_str for pattern in [
+                            "Resource exhausted",
+                            "Timed out waiting for credentials",
+                            "Credential refresh timed out",
+                            "Recaptcha token is invalid"
+                        ]):
+                            should_refresh = True
+                        
+                        # Check for potential token expiration or specific error patterns
+                        if should_refresh and attempt < max_retries:
+                            print(f"⚠️ 检测到需要刷新凭证的错误，触发刷新...")
                             
                             # 根据模式选择刷新策略
                             if BROWSER_MODE == "headful":
@@ -633,7 +646,7 @@ class VertexAIClient:
                                 print("❌ Refresh timed out.")
                         
                         # If we get here, it's a fatal error or retry failed
-                        error_payload = {"error": {"message": f"Upstream Error: {response.status_code} - {error_text.decode()}", "type": "upstream_error"}}
+                        error_payload = {"error": {"message": f"Upstream Error: {response.status_code} - {error_text_str}", "type": "upstream_error"}}
                         yield f"data: {json.dumps(error_payload)}\n\n"
                         return
 
@@ -738,19 +751,73 @@ class VertexAIClient:
                 return
 
             except Exception as e:
-                print(f"❌ Request failed: {e}")
+                error_msg = str(e)
+                print(f"❌ Request failed: {error_msg}")
+                
+                # 检测是否是需要刷新凭证的错误
+                should_refresh = any(pattern in error_msg for pattern in [
+                    "Timed out waiting for credentials",
+                    "Credential refresh timed out",
+                    "Resource exhausted",
+                    "Recaptcha token is invalid"
+                ])
+                
+                if should_refresh and attempt < max_retries:
+                    print(f"⚠️ 检测到凭证相关错误，触发刷新...")
+                    try:
+                        # 根据模式选择刷新策略
+                        if BROWSER_MODE == "headful":
+                            await headful_browser_refresh()
+                        else:
+                            await request_token_refresh()
+                        
+                        # Wait for new credentials
+                        refreshed = await cred_manager.wait_for_refresh(timeout=45)
+                        if refreshed:
+                            print("✅ Credentials refreshed! Waiting 1s before retrying request...")
+                            await asyncio.sleep(1) # Add 1 second delay
+                            # Update headers/url with new credentials
+                            new_creds = cred_manager.get_credentials()
+                            headers = new_creds['headers'].copy()
+                            headers['content-type'] = 'application/json'
+                            headers.pop('content-length', None)
+                            headers.pop('host', None)
+                            url = new_creds['url']
+                            continue # Retry loop
+                        else:
+                            print("❌ Refresh timed out.")
+                    except Exception as refresh_error:
+                        print(f"❌ 凭证刷新失败: {refresh_error}")
+                
                 if attempt < max_retries:
                     continue
-                error_payload = {"error": {"message": str(e), "type": "request_error"}}
+                    
+                error_payload = {"error": {"message": error_msg, "type": "request_error"}}
                 yield f"data: {json.dumps(error_payload)}\n\n"
                 return # Stop generator on fatal error
         
         # If we exit the loop without returning, it means we successfully processed the stream.
         
         if not content_yielded:
-            # If the stream finished but yielded no content, log a warning.
-            # We rely on the client to handle the empty stream gracefully after receiving [DONE].
+            # If the stream finished but yielded no content, log a warning and trigger refresh.
             print("⚠️ Proxy Warning: Google API returned an empty stream (200 OK but no content).")
+            
+            # 检测到空流时触发凭证刷新
+            print("🔄 检测到空流，触发凭证刷新...")
+            try:
+                if BROWSER_MODE == "headful":
+                    await headful_browser_refresh()
+                else:
+                    await request_token_refresh()
+                
+                # 等待凭证刷新
+                refreshed = await cred_manager.wait_for_refresh(timeout=60)
+                if refreshed:
+                    print("✅ 空流检测触发的凭证刷新成功")
+                else:
+                    print("❌ 空流检测触发的凭证刷新超时")
+            except Exception as e:
+                print(f"❌ 空流检测触发凭证刷新失败: {e}")
             
         # Ensure the stream is properly terminated with [DONE]
         yield "data: [DONE]\n\n"
@@ -777,7 +844,15 @@ class VertexAIClient:
                             for err in result['errors']:
                                 msg = err.get('message', 'Unknown Error')
                                 print(f"⚠️ Google API Error: {msg}")
-                                if "Recaptcha" in msg or "token" in msg.lower() or "Authentication" in msg:
+                                
+                                # 检测需要刷新凭证的错误模式
+                                if ("Recaptcha" in msg or
+                                    "token" in msg.lower() or
+                                    "Authentication" in msg or
+                                    "Resource exhausted" in msg or
+                                    "Timed out waiting for credentials" in msg or
+                                    "Credential refresh timed out" in msg or
+                                    "Recaptcha token is invalid" in msg):
                                     raise AuthError(f"Authentication failed: {msg}")
                             continue
     
